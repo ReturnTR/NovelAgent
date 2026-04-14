@@ -25,6 +25,15 @@
         "agent_id": "目标Agent ID",
         "task": "任务内容"
       }
+    },
+    {
+      "name": "bash_execution",
+      "description": "执行bash命令和脚本",
+      "parameters": {
+        "command": "要执行的bash命令",
+        "cwd": "工作目录",
+        "timeout": "超时时间"
+      }
     }
   ],
   "model": {
@@ -40,7 +49,24 @@
       "trigger_keywords": ["协调", "分配", "委派", "任务"]
     }
   ],
-  "tools": [],
+  "tools": [
+    {
+      "name": "execute_bash",
+      "description": "执行bash命令",
+      "parameters": {
+        "command": "string",
+        "cwd": "string (optional)",
+        "timeout": "integer (optional)"
+      }
+    },
+    {
+      "name": "list_directory",
+      "description": "列出目录内容",
+      "parameters": {
+        "path": "string (optional)"
+      }
+    }
+  ],
   "prompts": {
     "system_prompt": "prompts/system_prompt.txt",
     "task_prompt": "prompts/task_prompt.txt"
