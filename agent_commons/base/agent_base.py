@@ -41,7 +41,7 @@ class BaseAgent(ABC):
         with open(config_file, 'r', encoding='utf-8') as f:
             return json.load(f)
     
-    def _load_tools(self) -> List[Any]:
+    def _load_tools(self) -> List[Any]: #tools这么配置合理吗？我理解应该全都放到skills里面
         """加载工具函数"""
         tools = []
         tools_dir = self.agent_dir / "tools"

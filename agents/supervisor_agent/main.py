@@ -45,6 +45,7 @@ async def startup():
 @app.post("/a2a/message")
 async def handle_a2a_message(request: Request):
     data = await request.json()
+    print(data)
     message = A2AMessage(**data)
     
     result = await agent.process_task(

@@ -25,15 +25,6 @@
         "agent_id": "目标Agent ID",
         "task": "任务内容"
       }
-    },
-    {
-      "name": "bash_execution",
-      "description": "执行bash命令和脚本",
-      "parameters": {
-        "command": "要执行的bash命令",
-        "cwd": "工作目录",
-        "timeout": "超时时间"
-      }
     }
   ],
   "model": {
