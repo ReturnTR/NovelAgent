@@ -1,0 +1,48 @@
+{
+  "agent_type": "supervisor",
+  "agent_name": "主控Agent",
+  "version": "1.0.0",
+  "description": "负责协调和管理其他子Agent的主控Agent",
+  "capabilities": [
+    {
+      "name": "task_analysis",
+      "description": "分析任务需求",
+      "parameters": {
+        "task": "任务描述"
+      }
+    },
+    {
+      "name": "agent_selection",
+      "description": "选择合适的子Agent",
+      "parameters": {
+        "task_type": "任务类型"
+      }
+    },
+    {
+      "name": "task_delegation",
+      "description": "委派任务给子Agent",
+      "parameters": {
+        "agent_id": "目标Agent ID",
+        "task": "任务内容"
+      }
+    }
+  ],
+  "model": {
+    "provider": "openai",
+    "model_id": "moonshot-v1-8k",
+    "temperature": 0.7,
+    "max_tokens": 4000
+  },
+  "skills": [
+    {
+      "name": "task_coordination",
+      "description": "任务协调技能",
+      "trigger_keywords": ["协调", "分配", "委派", "任务"]
+    }
+  ],
+  "tools": [],
+  "prompts": {
+    "system_prompt": "prompts/system_prompt.txt",
+    "task_prompt": "prompts/task_prompt.txt"
+  }
+}

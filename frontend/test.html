@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前端测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        #output {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .success {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <h1>前端测试页面</h1>
+    
+    <div class="test-section">
+        <h2>测试 1: 检查 JavaScript 是否加载</h2>
+        <button onclick="testJS()">测试 JavaScript</button>
+        <div id="output1" class="output"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试 2: 检查 API 连接</h2>
+        <button onclick="testAPI()">测试 API</button>
+        <div id="output2" class="output"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试 3: 测试流式输出</h2>
+        <button onclick="testStream()">测试流式输出</button>
+        <div id="output3" class="output"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试 4: 检查 marked.js</h2>
+        <button onclick="testMarked()">测试 Markdown 渲染</button>
+        <div id="output4" class="output"></div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        function testJS() {
+            const output = document.getElementById('output1');
+            output.innerHTML = '<span class="success">✅ JavaScript 正常工作</span>';
+        }
+        
+        async function testAPI() {
+            const output = document.getElementById('output2');
+            output.innerHTML = '正在测试 API...';
+            
+            try {
+                const response = await fetch('http://localhost:8000/health');
+                const data = await response.json();
+                output.innerHTML = `<span class="success">✅ API 连接成功</span>\n${JSON.stringify(data, null, 2)}`;
+            } catch (error) {
+                output.innerHTML = `<span class="error">❌ API 连接失败: ${error.message}</span>`;
+            }
+        }
+        
+        async function testStream() {
+            const output = document.getElementById('output3');
+            output.innerHTML = '正在测试流式输出...\n';
+            
+            try {
+                const response = await fetch('http://localhost:8000/chat/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: '你好',
+                        history: []
+                    })
+                });
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    output.innerHTML += chunk + '\n';
+                }
+                
+                output.innerHTML += '\n<span class="success">✅ 流式输出测试完成</span>';
+            } catch (error) {
+                output.innerHTML += `\n<span class="error">❌ 错误: ${error.message}</span>`;
+            }
+        }
+        
+        function testMarked() {
+            const output = document.getElementById('output4');
+            
+            if (typeof marked === 'undefined') {
+                output.innerHTML = '<span class="error">❌ marked.js 未加载</span>';
+                return;
+            }
+            
+            const markdown = '# 标题\n\n这是**粗体**和*斜体*\n\n- 列表项 1\n- 列表项 2';
+            const html = marked.parse(markdown);
+            
+            output.innerHTML = `<span class="success">✅ marked.js 正常工作</span>\n\nMarkdown:\n${markdown}\n\n渲染结果:\n${html}`;
+        }
+    </script>
+</body>
+</html>
