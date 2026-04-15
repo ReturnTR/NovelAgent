@@ -8,56 +8,20 @@ Novel Agent 是一个基于多Agent协作的小说创作系统，采用模块化
 
 ```
 Novel_Agent/
-├── agent_commons/          # 公共模块
-│   ├── a2a/               # A2A协议
-│   │   ├── identity.py    # Agent身份名片
-│   │   ├── message_schema.py  # 消息格式
-│   │   └── protocol.py    # A2A协议处理
-│   ├── base/              # Agent基类
-│   │   └── agent_base.py  # 所有Agent的基类
-│   ├── factory/           # Agent工厂
-│   │   └── agent_factory.py  # Agent创建工厂
-│   ├── process/           # 进程管理
-│   │   └── manager.py     # 进程管理器
-│   ├── registry/          # Agent注册中心
-│   │   └── agent_registry.py  # Agent注册表
-│   ├── sessions/          # 会话管理
-│   │   └── manager.py     # 会话管理器
-│   └── coordinator.py     # 协调器主类
-├── agents/                # Agent实现
-│   ├── supervisor_agent/  # 主控Agent
-│   │   ├── cores/
-│   │   │   └── supervisor_agent.py
-│   │   ├── skills/
-│   │   ├── tools/
-│   │   ├── prompts/
-│   │   ├── memories/
-│   │   ├── agent_config.json
-│   │   └── main.py
-│   └── character_agent/   # 人物生成Agent
-│       ├── cores/
-│       │   └── character_agent.py
-│       ├── skills/
-│       ├── tools/
-│       ├── prompts/
-│       ├── memories/
-│       ├── agent_config.json
-│       └── main.py
-├── frontend/              # 前端界面
-│   ├── index.html        # 主页面
-│   ├── app.js            # 应用逻辑
-│   └── style.css         # 样式文件
-├── sessions/              # 会话文件存储
-│   ├── supervisor/
-│   ├── character/
-│   ├── outline/
-│   ├── content/
-│   ├── theme/
-│   └── cross_agent/
-├── doc/                   # 文档
-├── main_api.py           # 统一API入口
-├── test_architecture.py  # 架构测试
-└── requirements.txt      # 依赖包
+├── agent/                  # Agent模块
+│   ├── .env/               # Agent的python环境，对应/Users/seco/AIProjects/Novel_Agent/.venv
+│   ├── core/               # Agent核心模块，对应/Users/seco/AIProjects/Novel_Agent/agent_commons
+│   ├── agent_instances/    # Agent实例模块, 包含所有Agent的实例，对应/Users/seco/AIProjects/Novel_Agent/agents
+├── web_console/            # Agent管理&交互模块
+│   ├── backend/            # 后端FastAPI服务
+│   │   ├── .env/           # 环境变量配置文件，对应/Users/seco/AIProjects/Novel_Agent/.env
+│   │   ├── .env_example/   # 环境变量配置文件示例，对应/Users/seco/AIProjects/Novel_Agent/.env_example
+│   │   ├── main_api.py     # 统一API入口，对应/Users/seco/AIProjects/Novel_Agent/main_api.py
+│   │   ├── sessions/       # 会话文件存储，对应/Users/seco/AIProjects/Novel_Agent/sessions
+│   └── frontend/           # 前端界面，对应/Users/seco/AIProjects/Novel_Agent/frontend
+├── business/               # 业务端模块
+├── .gitignore              # Git忽略文件
+└── requirements.txt        # 依赖包
 ```
 
 ## 快速开始
@@ -88,18 +52,19 @@ python test_architecture.py
 
 #### 启动统一API入口（端口8000）
 ```bash
+cd web_console/backend
 python main_api.py
 ```
 
 #### 启动主控Agent（端口8001）
 ```bash
-cd agents/supervisor_agent
+cd agent/agent_instances/supervisor_agent
 python main.py
 ```
 
 #### 启动人物生成Agent（端口8002）
 ```bash
-cd agents/character_agent
+cd agent/agent_instances/character_agent
 python main.py
 ```
 
@@ -130,14 +95,14 @@ python main.py
 ### 步骤1：创建目录结构
 
 ```bash
-mkdir -p agents/new_agent/{cores,skills,tools,prompts,memories}
-touch agents/new_agent/__init__.py
-touch agents/new_agent/tools/__init__.py
+mkdir -p agent/agent_instances/new_agent/{cores,skills,tools,prompts,memories}
+touch agent/agent_instances/new_agent/__init__.py
+touch agent/agent_instances/new_agent/tools/__init__.py
 ```
 
 ### 步骤2：创建配置文件
 
-创建 `agents/new_agent/agent_config.json`：
+创建 `agent/agent_instances/new_agent/agent_config.json`：
 
 ```json
 {
@@ -155,10 +120,10 @@ touch agents/new_agent/tools/__init__.py
 
 ### 步骤3：创建Agent类
 
-创建 `agents/new_agent/cores/new_agent.py`：
+创建 `agent/agent_instances/new_agent/cores/new_agent.py`：
 
 ```python
-from agent_commons.base.agent_base import BaseAgent
+from agent.core.base.agent_base import BaseAgent
 from typing import Dict, Any, Optional
 
 class NewAgent(BaseAgent):
@@ -173,11 +138,11 @@ class NewAgent(BaseAgent):
 
 ### 步骤4：创建启动入口
 
-创建 `agents/new_agent/main.py`（复制 supervisor_agent/main.py，修改类名）
+创建 `agent/agent_instances/new_agent/main.py`（复制 supervisor_agent/main.py，修改类名）
 
 ### 步骤5：更新 main_api.py
 
-在 `main_api.py` 中添加新Agent的端口配置：
+在 `web_console/backend/main_api.py` 中添加新Agent的端口配置：
 
 ```python
 AGENT_PORTS = {
@@ -204,7 +169,7 @@ BaseAgent 提供了：
 
 ### 3. Sessions 文件存储
 
-会话记录存储在 `sessions/` 目录下，按Agent类型分类：
+会话记录存储在 `web_console/backend/sessions/` 目录下，按Agent类型分类：
 - JSONL格式存储
 - 支持事件追加
 - 便于跨Agent追踪
