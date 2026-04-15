@@ -5,14 +5,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import asyncio
 import os
 import sys
 import subprocess
 from pathlib import Path
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # load .env文件
 import aiohttp
 import psutil
 import signal
@@ -32,11 +32,11 @@ async def check_agent_status_periodically():
                         proc = psutil.Process(pid)
                         if not proc.is_running() and session.get("status") == "active":
                             session["status"] = "suspended"
-                            session["updated_at"] = datetime.utcnow().isoformat() + "Z"
+                            session["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                     except psutil.NoSuchProcess:
                         if session.get("status") == "active":
                             session["status"] = "suspended"
-                            session["updated_at"] = datetime.utcnow().isoformat() + "Z"
+                            session["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             session_manager._save_index(index_data)
         except Exception as e:
             print(f"Error checking agent status: {e}")
@@ -181,10 +181,10 @@ def get_all_running_agent_pids() -> List[int]:
     return pids
 
 def is_process_running(pid: int) -> bool:
-    """检查进程是否在运行"""
+    """检查进程是否在运行（不包括僵尸进程）"""
     try:
         proc = psutil.Process(pid)
-        return proc.is_running()
+        return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
     except psutil.NoSuchProcess:
         return False
 
@@ -192,7 +192,7 @@ def is_process_running(pid: int) -> bool:
 
 class ChatMessage(BaseModel):
     message: str
-    history: List[Dict[str, str]] = []
+    history: List[Dict[str, Any]] = []
     session_id: Optional[str] = None
 
 class CreateAgentRequest(BaseModel):
@@ -339,7 +339,7 @@ async def delete_agent(session_id: str):
 
 @app.post("/chat/stream")
 async def chat_stream(chat_message: ChatMessage):
-    """流式聊天接口"""
+    """流式聊天接口 - 支持工具调用展示"""
     session_id = chat_message.session_id
     if not session_id:
         return StreamingResponse(
@@ -362,41 +362,98 @@ async def chat_stream(chat_message: ChatMessage):
         )
 
     async def generate():
+        messages_to_save = []  # 收集所有消息用于保存
+        
         try:
+            # 1. 先保存用户消息
+            session_manager.append_message(session_id, "user", chat_message.message)
+            messages_to_save.append({"role": "user", "content": chat_message.message})
+            
             async with aiohttp.ClientSession() as http_session:
+                # 2. 从 session 文件读取完整的 context（而不是使用前端发送的不完整 history）
+                session_messages = session_manager.get_session_messages(session_id)
+                full_context = []
+                for msg in session_messages:
+                    item = {"role": msg.get("role")}
+                    if msg.get("role") == "user":
+                        item["content"] = msg.get("content", "")
+                    elif msg.get("role") == "assistant":
+                        item["content"] = msg.get("content", "")
+                        if msg.get("tool_calls"):
+                            item["tool_calls"] = msg["tool_calls"]
+                    elif msg.get("role") == "tool":
+                        item["content"] = msg.get("content", "")
+                        item["tool_call_id"] = msg.get("tool_call_id")
+                    full_context.append(item)
+
                 async with http_session.post(
-                    f"http://localhost:{port}/a2a/message",
+                    f"http://localhost:{port}/a2a/message/stream",
                     json={
                         "message_id": "msg-001",
                         "message_type": "task_request",
                         "sender": "user",
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         "content": {
                             "task": chat_message.message,
-                            "context": chat_message.history
+                            "context": full_context
                         }
                     },
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    timeout=aiohttp.ClientTimeout(total=120)
                 ) as response:
                     if response.status == 200:
-                        data = await response.json()
+                        # 3. 处理 SSE 流
+                        async for line in response.content:
+                            line = line.decode('utf-8').strip()
+                            if not line.startswith('data:'):
+                                continue
+                            
+                            try:
+                                data = json.loads(line[5:].strip())
+                                event_type = data.get('type')
 
-                        result = data.get("result", {})
-                        message = result.get("message", "处理完成")
+                                if event_type == 'assistant' or event_type == 'content':
+                                    content = data.get('content', '')
+                                    session_manager.append_message(session_id, "assistant", content)
+                                    yield f"data: {json.dumps({'type': 'content', 'content': content}, ensure_ascii=False)}\n\n"
 
-                        for char in message:
-                            yield f"data: {json.dumps({'content': char}, ensure_ascii=False)}\n\n"
-                            await asyncio.sleep(0.02)
+                                elif event_type == 'tool_call':
+                                    tool_calls = data.get('tool_calls', [])
+                                    content = data.get('content', '')
+                                    session_manager.append_message(session_id, "assistant", content, tool_calls=tool_calls)
+                                    yield f"data: {json.dumps({'type': 'tool_call', 'tool_calls': tool_calls}, ensure_ascii=False)}\n\n"
 
-                        yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+                                elif event_type == 'tool_result':
+                                    tool_call_id = data.get('tool_call_id')
+                                    content = data.get('content', '')
+                                    session_manager.append_message(session_id, "tool", content, tool_call_id=tool_call_id)
+                                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_call_id': tool_call_id, 'content': content}, ensure_ascii=False)}\n\n"
+
+                                elif event_type == 'done':
+                                    skills_used = data.get('skills_used', [])
+                                    yield f"data: {json.dumps({'type': 'done', 'skills_used': skills_used}, ensure_ascii=False)}\n\n"
+
+                                elif event_type == 'error':
+                                    yield f"data: {json.dumps({'type': 'error', 'error': data.get('error')}, ensure_ascii=False)}\n\n"
+
+                                else:
+                                    print(f'Unknown event type: {event_type}, data: {data}')
+                                    
+                            except json.JSONDecodeError:
+                                continue
                     else:
                         error_msg = f"Agent 响应错误: {response.status}"
-                        yield f"data: {json.dumps({'error': error_msg}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
 
         except aiohttp.ClientError as e:
-            yield f"data: {json.dumps({'error': f'连接Agent失败: {str(e)}'}, ensure_ascii=False)}\n\n"
+            import traceback
+            tb = traceback.format_exc()
+            error_msg = f'连接Agent失败: {str(e)}\n\nTraceback:\n{tb}'
+            yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'error': f'处理失败: {str(e)}'}, ensure_ascii=False)}\n\n"
+            import traceback
+            tb = traceback.format_exc()
+            error_msg = f'处理失败: {str(e)}\n\nTraceback:\n{tb}'
+            yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -449,16 +506,21 @@ async def get_session_messages(session_id: str):
     return {"messages": messages}
 
 @app.post("/api/sessions/{session_id}/messages")
-async def append_message(session_id: str, message: Dict[str, str]):
+async def append_message(session_id: str, message: Dict[str, Any]):
     """追加消息到会话"""
     role = message.get("role")
-    content = message.get("content")
+    content = message.get("content", "")
+    tool_calls = message.get("tool_calls")
+    tool_results = message.get("tool_results")
 
-    if not role or not content:
-        raise HTTPException(status_code=400, detail="Missing role or content")
+    if not role:
+        raise HTTPException(status_code=400, detail="Missing role")
 
-    session_manager.append_message(session_id, role, content)
-    return {"status": "ok"}
+    if not content and not tool_calls and not tool_results:
+        raise HTTPException(status_code=400, detail="Missing content, tool_calls, or tool_results")
+
+    session_manager.append_message(session_id, role, content, tool_calls, tool_results)
+    return {"status": "ok", "received": {"tool_calls": tool_calls, "tool_results": tool_results}}
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):

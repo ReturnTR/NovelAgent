@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent.parent
@@ -7,10 +8,11 @@ sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from cores.supervisor_agent import SupervisorAgent
 from agent_commons.a2a.message_schema import A2AMessage
 from agent_commons.a2a.identity import AgentIdentity
-from datetime import datetime
+from datetime import datetime, timezone
 
 app = FastAPI()
 
@@ -37,13 +39,16 @@ async def startup():
         endpoint=f"http://localhost:{port}",
         version="1.0.0",
         capabilities=agent.capabilities,
-        created_at=datetime.utcnow().isoformat() + "Z"
+        created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     )
     print(f"Supervisor Agent 启动: {agent_id} (端口: {port})")
     print(f"Capabilities: {[c['name'] for c in agent.capabilities]}")
+    tool_names = [getattr(t, "name", type(t).__name__) for t in agent.tools]
+    print(f"Loaded tools: {tool_names}")
 
 @app.post("/a2a/message")
 async def handle_a2a_message(request: Request):
+    """同步处理消息"""
     data = await request.json()
     print(data)
     message = A2AMessage(**data)
@@ -57,6 +62,27 @@ async def handle_a2a_message(request: Request):
         "status": "ok",
         "result": result
     }
+
+@app.post("/a2a/message/stream")
+async def handle_a2a_message_stream(request: Request):
+    """流式处理消息（SSE）"""
+    data = await request.json()
+    message = A2AMessage(**data)
+    
+    async def generate():
+        try:
+            async for event in agent.process_task_stream(
+                message.content.get("task", ""),
+                message.content.get("context")
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            error_msg = f"{str(e)}\n\nTraceback:\n{tb}"
+            yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 @app.get("/health")
 async def health():

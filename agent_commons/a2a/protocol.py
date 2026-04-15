@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 import aiohttp
 from .identity import AgentIdentity
@@ -38,7 +38,7 @@ class A2AProtocol:
             message_id=self.generate_message_id(),
             message_type=MessageType.AGENT_DISCOVERY,
             sender="coordinator",
-            timestamp=datetime.utcnow().isoformat() + "Z",
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             content={}
         )
         

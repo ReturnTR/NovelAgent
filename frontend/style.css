@@ -1048,3 +1048,151 @@ body.dark-theme th {
 body.dark-theme td {
     color: #d4d4d4;
 }
+
+/* 工具调用样式 */
+.tool-calls-container {
+    margin-top: 15px;
+    border-top: 1px solid #e9ecef;
+    padding-top: 10px;
+}
+
+.tool-call-item {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    overflow: hidden;
+}
+
+.tool-call-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 15px;
+    background: #e9ecef;
+    font-size: 14px;
+}
+
+.tool-icon {
+    font-size: 16px;
+}
+
+.tool-name {
+    font-weight: 600;
+    color: #333;
+}
+
+.tool-status {
+    margin-left: auto;
+    font-size: 12px;
+    color: #ffc107;
+    font-weight: 500;
+}
+
+.tool-status.completed {
+    color: #28a745;
+}
+
+.tool-call-args {
+    padding: 10px 15px;
+    background: #f8f9fa;
+}
+
+.tool-call-args pre {
+    margin: 0;
+    font-size: 12px;
+    color: #666;
+    background: white;
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+.tool-call-result {
+    padding: 10px 15px;
+    background: #f0f8ff;
+    border-top: 1px solid #e9ecef;
+}
+
+.tool-result-content pre {
+    margin: 0;
+    font-size: 12px;
+    color: #333;
+    background: white;
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* 深色主题工具调用样式 */
+body.dark-theme .tool-calls-container {
+    border-top: 1px solid #3e3e42;
+}
+
+body.dark-theme .tool-call-item {
+    background: #2d2d30;
+    border: 1px solid #3e3e42;
+}
+
+body.dark-theme .tool-call-header {
+    background: #3e3e42;
+    color: #d4d4d4;
+}
+
+body.dark-theme .tool-icon {
+    color: #d4d4d4;
+}
+
+body.dark-theme .tool-name {
+    color: #d4d4d4;
+}
+
+body.dark-theme .tool-status {
+    color: #ffc107;
+}
+
+body.dark-theme .tool-status.completed {
+    color: #28a745;
+}
+
+body.dark-theme .tool-call-args {
+    background: #2d2d30;
+}
+
+body.dark-theme .tool-call-args pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+body.dark-theme .tool-call-result {
+    background: #252526;
+    border-top: 1px solid #3e3e42;
+}
+
+body.dark-theme .tool-result-content pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+/* JSON 语法高亮 - 深色主题 */
+body.dark-theme .tool-result-content pre .json-key {
+    color: #9cdcfe;
+}
+
+body.dark-theme .tool-result-content pre .json-string {
+    color: #ce9178;
+}
+
+body.dark-theme .tool-result-content pre .json-number {
+    color: #b5cea8;
+}
+
+body.dark-theme .tool-result-content pre .json-boolean {
+    color: #569cd6;
+}
+
+body.dark-theme .tool-result-content pre .json-null {
+    color: #569cd6;
+}

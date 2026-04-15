@@ -197,7 +197,7 @@ async function switchAgent(sessionId) {
             
             if (messages.length > 0) {
                 messages.forEach(msg => {
-                    addMessage(msg.role, msg.content);
+                    addMessage(msg.role, msg.content, msg.tool_calls, msg.tool_results);
                 });
             } else {
                 chatContainer.innerHTML = `
@@ -333,18 +333,7 @@ async function sendMessage() {
     messages.push({ role: 'user', content: message });
     addMessage('user', message);
     
-    // 保存用户消息到后端
-    if (currentSessionId) {
-        try {
-            await fetch(`${API_BASE}/api/sessions/${currentSessionId}/messages`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ role: 'user', content: message })
-            });
-        } catch (error) {
-            console.error('Failed to save user message:', error);
-        }
-    }
+    // 用户消息由服务器端保存
     
     input.value = '';
     isStreaming = true;
@@ -365,10 +354,25 @@ async function sendMessage() {
             },
             body: JSON.stringify({
                 message: message,
-                history: messages.slice(0, -1).map(msg => ({
-                    role: msg.role,
-                    content: msg.content
-                })),
+                history: messages.slice(0, -1).map(msg => {
+                    const item = { role: msg.role };
+
+                    if (msg.role === 'user') {
+                        item.content = msg.content;
+                    }
+                    else if (msg.role === 'assistant') {
+                        item.content = msg.content;
+                        if (msg.toolCalls && msg.toolCalls.length > 0) {
+                            item.tool_calls = msg.toolCalls;
+                        }
+                    }
+                    else if (msg.role === 'tool') {
+                        item.content = msg.content;
+                        item.tool_call_id = msg.tool_call_id;
+                    }
+
+                    return item;
+                }),
                 session_id: currentSessionId
             })
         });
@@ -397,22 +401,48 @@ async function sendMessage() {
                     try {
                         const parsed = JSON.parse(data);
                         
-                        if (parsed.content) {
+                        // 处理不同类型的 SSE 事件
+                    if (parsed.type === 'content') {
+                        // AI 普通回复内容
                         currentAssistantMessage.content += parsed.content;
                         updateMessageContent(messageElement, currentAssistantMessage.content);
                     }
-                    
-                    if (parsed.done) {
+                    else if (parsed.type === 'tool_call') {
+                        // AI 请求调用工具
+                        console.log('Tool call:', parsed.tool_calls);
+                        currentAssistantMessage.toolCalls = parsed.tool_calls;
+                        addToolCallUI(messageElement, parsed.tool_calls);
+                    }
+                    else if (parsed.type === 'tool_result') {
+                        // 工具执行结果
+                        console.log('Tool result:', parsed);
+                        const toolResult = {
+                            tool_call_id: parsed.tool_call_id,
+                            content: parsed.content
+                        };
+                        currentAssistantMessage.toolResults.push(toolResult);
+                        // 同时保存为独立的 tool 消息
+                        const toolMessage = {
+                            role: 'tool',
+                            content: parsed.content,
+                            tool_call_id: parsed.tool_call_id
+                        };
+                        messages.push(toolMessage);
+                        updateToolResultUI(messageElement, parsed.tool_call_id, parsed.content);
+                    }
+                    else if (parsed.type === 'done') {
                         console.log('Stream completed');
-                        // 保存助手消息到后端 - 使用当前session_id，不要用parsed.session_id
-                        if (currentSessionId && currentAssistantMessage.content) {
+                        // 保存完整对话历史到后端
+                        if (currentSessionId) {
                             try {
                                 await fetch(`${API_BASE}/api/sessions/${currentSessionId}/messages`, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ 
                                         role: 'assistant', 
-                                        content: currentAssistantMessage.content 
+                                        content: currentAssistantMessage.content,
+                                        tool_calls: currentAssistantMessage.toolCalls,
+                                        tool_results: currentAssistantMessage.toolResults
                                     })
                                 });
                                 console.log('Assistant message saved to backend');
@@ -421,11 +451,14 @@ async function sendMessage() {
                             }
                         }
                     }
-                    
-                    if (parsed.error) {
+                    else if (parsed.type === 'error') {
                         console.error('Stream error:', parsed.error);
                         currentAssistantMessage.content = `错误: ${parsed.error}`;
                         updateMessageContent(messageElement, currentAssistantMessage.content);
+                    }
+                    else {
+                        // 未知类型，记录日志但不显示错误
+                        console.log('Unknown event type:', parsed.type, parsed);
                     }
                     } catch (e) {
                         console.error('Parse error:', e, data);
@@ -445,7 +478,7 @@ async function sendMessage() {
     }
 }
 
-function addMessage(role, content) {
+function addMessage(role, content, toolCalls, toolResults) {
     const container = document.getElementById('chatContainer');
     
     const welcomeMessage = container.querySelector('.welcome-message');
@@ -473,6 +506,18 @@ function addMessage(role, content) {
     messageDiv.appendChild(bubble);
     container.appendChild(messageDiv);
     
+    // 处理工具调用
+    if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
+        addToolCallUI(messageDiv, toolCalls);
+        
+        // 处理工具结果
+        if (toolResults && Array.isArray(toolResults) && toolResults.length > 0) {
+            toolResults.forEach(result => {
+                updateToolResultUI(messageDiv, result.tool_call_id, result.content);
+            });
+        }
+    }
+    
     container.scrollTop = container.scrollHeight;
     
     return messageDiv;
@@ -486,6 +531,106 @@ function updateMessageContent(messageElement, content) {
     
     const container = document.getElementById('chatContainer');
     container.scrollTop = container.scrollHeight;
+}
+
+// 添加工具调用 UI
+function addToolCallUI(messageElement, toolCalls) {
+    const bubble = messageElement.querySelector('.bubble');
+    if (!bubble) return;
+    
+    // 创建工具调用容器
+    const toolContainer = document.createElement('div');
+    toolContainer.className = 'tool-calls-container';
+    
+    toolCalls.forEach(toolCall => {
+        try {
+            const toolId = toolCall.id || `tool-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            const toolName = toolCall.name || 'unknown-tool';
+            const toolArgs = toolCall.arguments || {};
+            
+            const toolDiv = document.createElement('div');
+            toolDiv.className = 'tool-call-item';
+            toolDiv.id = `tool-call-${toolId}`;
+            toolDiv.innerHTML = `
+                <div class="tool-call-header">
+                    <span class="tool-icon">🔧</span>
+                    <span class="tool-name">${toolName}</span>
+                    <span class="tool-status">执行中...</span>
+                </div>
+                <div class="tool-call-args">
+                    <pre>${JSON.stringify(toolArgs, null, 2)}</pre>
+                </div>
+                <div class="tool-call-result" style="display: none;">
+                    <div class="tool-result-content"></div>
+                </div>
+            `;
+            toolContainer.appendChild(toolDiv);
+        } catch (error) {
+            console.error('Error rendering tool call:', error, toolCall);
+        }
+    });
+    
+    bubble.appendChild(toolContainer);
+    
+    const container = document.getElementById('chatContainer');
+    container.scrollTop = container.scrollHeight;
+}
+
+// 更新工具执行结果 UI
+function updateToolResultUI(messageElement, toolCallId, result) {
+    try {
+        if (!messageElement || !toolCallId) return;
+        
+        const toolDiv = messageElement.querySelector(`#tool-call-${toolCallId}`);
+        if (!toolDiv) return;
+        
+        const statusSpan = toolDiv.querySelector('.tool-status');
+        const resultDiv = toolDiv.querySelector('.tool-call-result');
+        const resultContent = toolDiv.querySelector('.tool-result-content');
+        
+        if (!statusSpan || !resultDiv || !resultContent) return;
+        
+        // 更新状态
+        statusSpan.textContent = '已完成';
+        statusSpan.className = 'tool-status completed';
+        
+        // 显示结果
+        try {
+            const parsedResult = JSON.parse(result);
+            const highlightedJson = syntaxHighlightJson(parsedResult);
+            resultContent.innerHTML = `<pre>${highlightedJson}</pre>`;
+        } catch (e) {
+            resultContent.textContent = result || '无结果';
+        }
+        
+        resultDiv.style.display = 'block';
+        
+        const container = document.getElementById('chatContainer');
+        container.scrollTop = container.scrollHeight;
+    } catch (error) {
+        console.error('Error updating tool result:', error);
+    }
+}
+
+function syntaxHighlightJson(obj) {
+    const json = JSON.stringify(obj, null, 2);
+    return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+        let cls = 'json-number';
+        if (/^"/.test(match)) {
+            if (/:$/.test(match)) {
+                cls = 'json-key';
+                match = match.slice(0, -1) + '</span>:';
+                return `<span class="${cls}">${match}`;
+            } else {
+                cls = 'json-string';
+            }
+        } else if (/true|false/.test(match)) {
+            cls = 'json-boolean';
+        } else if (/null/.test(match)) {
+            cls = 'json-null';
+        }
+        return `<span class="${cls}">${match}</span>`;
+    });
 }
 
 function updateStatus(streaming) {

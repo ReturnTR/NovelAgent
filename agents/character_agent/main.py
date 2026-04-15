@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from cores.character_agent import CharacterAgent
 from agent_commons.a2a.message_schema import A2AMessage
 from agent_commons.a2a.identity import AgentIdentity
-from datetime import datetime
+from datetime import datetime, timezone
 
 app = FastAPI()
 
@@ -37,7 +37,7 @@ async def startup():
         endpoint=f"http://localhost:{port}",
         version="1.0.0",
         capabilities=agent.capabilities,
-        created_at=datetime.utcnow().isoformat() + "Z"
+        created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     )
     print(f"Character Agent 启动: {agent_id} (端口: {port})")
     print(f"Capabilities: {[c['name'] for c in agent.capabilities]}")

@@ -1,7 +1,7 @@
 import subprocess
-from typing import Dict, Any, List, Optional
+import json
+from typing import Dict, Any, List, Optional, Callable
 from pathlib import Path
-from langchain_core.tools import tool
 
 ALLOWED_DIRECTORIES = [
     "/Users/seco/AIProjects/Novel_Agent",
@@ -11,28 +11,17 @@ ALLOWED_DIRECTORIES = [
 
 MAX_TIMEOUT = 30
 
-@tool("execute_bash")
 def execute_bash(command: str, cwd: Optional[str] = None, timeout: int = MAX_TIMEOUT) -> Dict[str, Any]:
     """
-    Execute a bash command in a safe sandboxed directory.
+    执行bash命令并返回结果
 
-    Use this tool when shell execution is required (e.g., run scripts, inspect files, or check command output).
-    The command is blocked if it contains dangerous patterns or if the working directory is outside allowed paths.
+    参数:
+        command: 要执行的bash命令
+        cwd: 工作目录，默认为项目根目录
+        timeout: 超时时间（秒），默认30秒
 
-    Args:
-        command: Full bash command to execute.
-        cwd: Working directory. Defaults to project root when omitted.
-        timeout: Max execution time in seconds. Default is 30.
-
-    Returns:
-        Dict with stable fields:
-        - success (bool): Whether command completed with exit code 0.
-        - stdout (str): Standard output text.
-        - stderr (str): Standard error text.
-        - returncode (int): Process exit code, -1 when blocked/failed/timeout.
-        - command (str): Original input command.
-        - cwd (str, optional): Effective working directory when execution started.
-        - error (str, optional): Human-readable error when execution is rejected or fails.
+    返回:
+        包含执行结果的字典
     """
     if not cwd:
         cwd = "/Users/seco/AIProjects/Novel_Agent"
@@ -123,6 +112,46 @@ def _is_command_safe(command: str) -> bool:
 
     return True
 
+def list_directory(path: str = ".") -> Dict[str, Any]:
+    """
+    列出目录内容
+
+    参数:
+        path: 目录路径，相对于项目根目录
+
+    返回:
+        目录内容列表
+    """
+    base_dir = Path("/Users/seco/AIProjects/Novel_Agent")
+    target_dir = (base_dir / path).resolve()
+
+    if not str(target_dir).startswith(str(base_dir)):
+        return {
+            "success": False,
+            "error": "路径不在允许范围内"
+        }
+
+    try:
+        items = []
+        for item in target_dir.iterdir():
+            items.append({
+                "name": item.name,
+                "type": "directory" if item.is_dir() else "file",
+                "size": item.stat().st_size if item.is_file() else 0
+            })
+
+        return {
+            "success": True,
+            "path": str(target_dir),
+            "items": sorted(items, key=lambda x: (x["type"] != "directory", x["name"]))
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 tools = [
     execute_bash,
+    list_directory
 ]
