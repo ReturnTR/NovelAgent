@@ -9,17 +9,15 @@ Novel Agent 是一个基于多Agent协作的小说创作系统，采用模块化
 ```
 Novel_Agent/
 ├── agent/                  # Agent模块
-│   ├── .env/               # Agent的python环境，对应/Users/seco/AIProjects/Novel_Agent/.venv
-│   ├── core/               # Agent核心模块，对应/Users/seco/AIProjects/Novel_Agent/agent_commons
-│   ├── agent_instances/    # Agent实例模块, 包含所有Agent的实例，对应/Users/seco/AIProjects/Novel_Agent/agents
+│   ├── core/               # Agent核心模块
+│   ├── agent_instances/    # Agent实例模块, 包含所有Agent的实例
 ├── web_console/            # Agent管理&交互模块
 │   ├── backend/            # 后端FastAPI服务
-│   │   ├── .env/           # 环境变量配置文件，对应/Users/seco/AIProjects/Novel_Agent/.env
-│   │   ├── .env_example/   # 环境变量配置文件示例，对应/Users/seco/AIProjects/Novel_Agent/.env_example
-│   │   ├── main_api.py     # 统一API入口，对应/Users/seco/AIProjects/Novel_Agent/main_api.py
-│   │   ├── sessions/       # 会话文件存储，对应/Users/seco/AIProjects/Novel_Agent/sessions
-│   └── frontend/           # 前端界面，对应/Users/seco/AIProjects/Novel_Agent/frontend
+│   │   ├── main_api.py     # 统一API入口
+│   │   ├── sessions/       # 会话文件存储
+│   └── frontend/           # 前端界面
 ├── business/               # 业务端模块
+├── .env                    # 环境变量
 ├── .gitignore              # Git忽略文件
 └── requirements.txt        # 依赖包
 ```
