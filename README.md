@@ -334,3 +334,8 @@ AGENT_MAIN_FILES = {
 ## 许可证
 
 MIT License
+
+
+## 改进
+1. agent冻结功能，即上下文固定，这样能保持Agent的状态，固有现有Agent功能
+

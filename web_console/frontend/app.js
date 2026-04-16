@@ -421,7 +421,7 @@ async function sendMessage() {
                             content: parsed.content
                         };
                         currentAssistantMessage.toolResults.push(toolResult);
-                        // 同时保存为独立的 tool 消息
+                        // 创建独立的 tool 消息
                         const toolMessage = {
                             role: 'tool',
                             content: parsed.content,
@@ -429,27 +429,6 @@ async function sendMessage() {
                         };
                         messages.push(toolMessage);
                         updateToolResultUI(messageElement, parsed.tool_call_id, parsed.content);
-                    }
-                    else if (parsed.type === 'done') {
-                        console.log('Stream completed');
-                        // 保存完整对话历史到后端
-                        if (currentSessionId) {
-                            try {
-                                await fetch(`${API_BASE}/api/sessions/${currentSessionId}/messages`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ 
-                                        role: 'assistant', 
-                                        content: currentAssistantMessage.content,
-                                        tool_calls: currentAssistantMessage.toolCalls,
-                                        tool_results: currentAssistantMessage.toolResults
-                                    })
-                                });
-                                console.log('Assistant message saved to backend');
-                            } catch (error) {
-                                console.error('Failed to save assistant message:', error);
-                            }
-                        }
                     }
                     else if (parsed.type === 'error') {
                         console.error('Stream error:', parsed.error);
@@ -498,6 +477,18 @@ function addMessage(role, content, toolCalls, toolResults) {
     
     if (role === 'user') {
         bubble.textContent = content;
+    } else if (role === 'tool') {
+        // Tool 消息添加折叠功能
+        bubble.innerHTML = `
+            <div class="tool-message-header">
+                <span class="tool-icon">🔧</span>
+                <span class="tool-message-title">工具执行结果</span>
+                <span class="tool-toggle" onclick="toggleToolResult(this)">▼</span>
+            </div>
+            <div class="tool-message-content" style="display: none;">
+                ${content}
+            </div>
+        `;
     } else {
         bubble.innerHTML = renderMarkdown(content || '思考中...');
     }
@@ -561,9 +552,17 @@ function addToolCallUI(messageElement, toolCalls) {
                     <pre>${JSON.stringify(toolArgs, null, 2)}</pre>
                 </div>
                 <div class="tool-call-result" style="display: none;">
+                    <div class="tool-result-toggle">▲ 查看结果</div>
                     <div class="tool-result-content"></div>
                 </div>
             `;
+            const resultDiv = toolDiv.querySelector('.tool-call-result');
+            const toggleBtn = resultDiv.querySelector('.tool-result-toggle');
+            toggleBtn.onclick = () => {
+                const isHidden = resultDiv.style.display === 'none';
+                resultDiv.style.display = isHidden ? 'block' : 'none';
+                toggleBtn.textContent = isHidden ? '▲ 隐藏结果' : '▼ 查看结果';
+            };
             toolContainer.appendChild(toolDiv);
         } catch (error) {
             console.error('Error rendering tool call:', error, toolCall);
@@ -603,13 +602,19 @@ function updateToolResultUI(messageElement, toolCallId, result) {
             resultContent.textContent = result || '无结果';
         }
         
-        resultDiv.style.display = 'block';
-        
         const container = document.getElementById('chatContainer');
         container.scrollTop = container.scrollHeight;
     } catch (error) {
         console.error('Error updating tool result:', error);
     }
+}
+
+// 切换工具结果的显示/隐藏
+function toggleToolResult(toggleBtn) {
+    const contentDiv = toggleBtn.closest('.tool-message-header').nextElementSibling;
+    const isHidden = contentDiv.style.display === 'none';
+    contentDiv.style.display = isHidden ? 'block' : 'none';
+    toggleBtn.textContent = isHidden ? '▲' : '▼';
 }
 
 function syntaxHighlightJson(obj) {

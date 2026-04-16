@@ -1093,6 +1093,63 @@ body.dark-theme td {
     color: #28a745;
 }
 
+.tool-result-toggle {
+    cursor: pointer;
+    padding: 5px 15px;
+    font-size: 12px;
+    color: #6c757d;
+    user-select: none;
+    transition: color 0.2s;
+}
+
+.tool-result-toggle:hover {
+    color: #495057;
+}
+
+/* Tool 消息样式 */
+.tool-message-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #e9ecef;
+    border-radius: 6px 6px 0 0;
+    font-size: 14px;
+}
+
+.tool-message-header .tool-icon {
+    font-size: 16px;
+}
+
+.tool-message-header .tool-message-title {
+    font-weight: 600;
+    color: #333;
+    flex: 1;
+}
+
+.tool-message-header .tool-toggle {
+    cursor: pointer;
+    font-size: 12px;
+    color: #6c757d;
+    user-select: none;
+    transition: color 0.2s;
+}
+
+.tool-message-header .tool-toggle:hover {
+    color: #495057;
+}
+
+.tool-message-content {
+    padding: 12px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    font-size: 14px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
 .tool-call-args {
     padding: 10px 15px;
     background: #f8f9fa;

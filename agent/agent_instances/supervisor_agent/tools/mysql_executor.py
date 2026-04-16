@@ -134,5 +134,5 @@ def _is_sql_safe(sql_command: str) -> bool:
     return any(sql.startswith(prefix) for prefix in ALLOWED_SQL_PREFIXES)
 
 tools = [
-    execute_remote_mysql_command,
+    # execute_remote_mysql_command,
 ]

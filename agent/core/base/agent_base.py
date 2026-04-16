@@ -4,6 +4,9 @@ from pathlib import Path
 import json
 import os
 from dotenv import load_dotenv
+from dataclasses import dataclass
+
+import frontmatter
 
 load_dotenv()
 
@@ -19,19 +22,59 @@ class AgentState(TypedDict):
     context: Dict[str, Any]
     skills_used: List[str]
 
+
+@dataclass
+class SkillMetadata:
+    name: str
+    description: str
+    license: Optional[str] = None
+    allowed_tools: Optional[List[str]] = None
+
+
+class SkillManager:
+    """Skill 管理器 - 支持渐进式披露"""
+
+    @staticmethod
+    def parse_skill_metadata(skill_md_path: Path) -> tuple[SkillMetadata, str]:
+        """解析 SKILL.md，返回 (元数据, 正文内容)"""
+        post = frontmatter.load(skill_md_path)
+        metadata = SkillMetadata(
+            name=post.metadata.get('name', ''),
+            description=post.metadata.get('description', ''),
+            license=post.metadata.get('license'),
+            allowed_tools=post.metadata.get('allowed_tools')
+        )
+        return metadata, post.content
+
+    @staticmethod
+    def load_all_skills(skills_dir: Path) -> Dict[str, tuple[SkillMetadata, str]]:
+        """加载所有 Skill 的元数据和内容"""
+        skills = {}
+        if skills_dir.exists():
+            for skill_dir in skills_dir.iterdir():
+                if skill_dir.is_dir():
+                    skill_file = skill_dir / "SKILL.md"
+                    if skill_file.exists():
+                        try:
+                            metadata, content = SkillManager.parse_skill_metadata(skill_file)
+                            skills[skill_dir.name] = (metadata, content)
+                        except Exception as e:
+                            print(f"加载 Skill 失败 {skill_file}: {e}")
+        return skills
+
 class NodeFactory:
     @staticmethod
-    def create_model_node(llm: ChatOpenAI, get_relevant_skills_fn: Callable, load_prompt_fn: Callable) -> Callable:
+    def create_model_node(llm: ChatOpenAI, load_skills_metadata_fn: Callable, load_prompt_fn: Callable) -> Callable:
         def model_node(state: AgentState) -> AgentState:
-            relevant_skills = get_relevant_skills_fn(state["current_task"])
+            skills_metadata = load_skills_metadata_fn()
 
             messages = []
             system_prompt = load_prompt_fn("system_prompt")
 
             if system_prompt:
-                if relevant_skills:
-                    skill_context = "\n\n".join([f"## {name}\n{content}" for name, content in relevant_skills.items()])
-                    system_content = system_prompt + "\n\n可用技能:\n" + skill_context
+                if skills_metadata:
+                    skill_intro = "\n".join([f"- **{m.name}**: {m.description}" for m in skills_metadata])
+                    system_content = system_prompt + "\n\n可用技能:\n" + skill_intro
                 else:
                     system_content = system_prompt
                 messages.append(SystemMessage(content=system_content))
@@ -43,7 +86,7 @@ class NodeFactory:
                 "messages": [response],
                 "current_task": state["current_task"],
                 "context": state.get("context", {}),
-                "skills_used": list(relevant_skills.keys())
+                "skills_used": []
             }
 
         return model_node
@@ -149,17 +192,10 @@ class BaseAgent(ABC):
                         print(f"加载工具失败 {tool_file}: {e}")
         return tools
 
-    def _load_skills(self) -> Dict[str, str]:
-        skills = {}
+    def _load_skills(self) -> Dict[str, tuple[SkillMetadata, str]]:
+        """加载所有 Skills，返回 {skill_name: (metadata, content)}"""
         skills_dir = self.agent_dir / "skills"
-        if skills_dir.exists():
-            for skill_dir in skills_dir.iterdir():
-                if skill_dir.is_dir():
-                    skill_file = skill_dir / "skill.md"
-                    if skill_file.exists():
-                        with open(skill_file, 'r', encoding='utf-8') as f:
-                            skills[skill_dir.name] = f.read()
-        return skills
+        return SkillManager.load_all_skills(skills_dir)
 
     def _init_llm(self) -> ChatOpenAI:
         model_config = self.config.get("model", {})
@@ -191,49 +227,36 @@ class BaseAgent(ABC):
         """构建标准的 Agent 图结构（Tool-Use Loop 模式）"""
         workflow = StateGraph(AgentState)
 
-        # 使用 NodeFactory 创建节点函数
         model_node = NodeFactory.create_model_node(
             self.llm,
-            self.get_relevant_skills,
+            self.get_all_skills_metadata,
             self.load_prompt
         )
 
         tool_node = NodeFactory.create_tool_node(self.tools)
         tools_condition = NodeFactory.create_tools_condition(self.tools)
 
-        # 添加节点
         workflow.add_node("model", model_node)
         workflow.add_node("tool_node", tool_node)
 
-        # 设置入口点
         workflow.set_entry_point("model")
 
-        # 添加条件边
         workflow.add_conditional_edges(
             "model",
             tools_condition,
             {
-                "tool_node": "tool_node",  # tool_use → 执行工具
-                "end": END                # end_turn → 任务完成
+                "tool_node": "tool_node",
+                "end": END
             }
         )
 
-        # 执行工具后回到 model 节点（循环）
         workflow.add_edge("tool_node", "model")
 
         return workflow.compile()
 
-    @abstractmethod
-    def is_skill_relevant(self, skill_name: str, task: str) -> bool:
-        """判断技能是否相关（子类必须实现）"""
-        pass
-
-    def get_relevant_skills(self, task: str) -> Dict[str, str]:
-        relevant_skills = {}
-        for skill_name, skill_content in self.skills.items():
-            if self.is_skill_relevant(skill_name, task):
-                relevant_skills[skill_name] = skill_content
-        return relevant_skills
+    def get_all_skills_metadata(self) -> List[SkillMetadata]:
+        """获取所有 Skills 的元数据"""
+        return [metadata for metadata, _ in self.skills.values()]
 
     def load_prompt(self, prompt_name: str) -> str:
         prompt_file = self.agent_dir / "prompts" / f"{prompt_name}.txt"
