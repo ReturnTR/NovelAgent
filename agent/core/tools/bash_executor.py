@@ -4,9 +4,7 @@ from typing import Dict, Any, List, Optional, Callable
 from pathlib import Path
 
 ALLOWED_DIRECTORIES = [
-    "/Users/seco/AIProjects/Novel_Agent",
-    "/tmp",
-    "/Users/seco"
+    "./"
 ]
 
 MAX_TIMEOUT = 30
@@ -24,7 +22,7 @@ def execute_bash(command: str, cwd: Optional[str] = None, timeout: int = MAX_TIM
         包含执行结果的字典
     """
     if not cwd:
-        cwd = "/Users/seco/AIProjects/Novel_Agent"
+        cwd = "./"
 
     if not _is_path_safe(cwd, ALLOWED_DIRECTORIES):
         return {
@@ -122,7 +120,7 @@ def list_directory(path: str = ".") -> Dict[str, Any]:
     返回:
         目录内容列表
     """
-    base_dir = Path("/Users/seco/AIProjects/Novel_Agent")
+    base_dir = Path("./")
     target_dir = (base_dir / path).resolve()
 
     if not str(target_dir).startswith(str(base_dir)):

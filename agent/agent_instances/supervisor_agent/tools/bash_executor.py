@@ -4,9 +4,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 ALLOWED_DIRECTORIES = [
-    "/Users/seco/AIProjects/Novel_Agent",
-    "/tmp",
-    "/Users/seco"
+    "./"
 ]
 
 MAX_TIMEOUT = 30
@@ -35,7 +33,7 @@ def execute_bash(command: str, cwd: Optional[str] = None, timeout: int = MAX_TIM
         - error (str, optional): Human-readable error when execution is rejected or fails.
     """
     if not cwd:
-        cwd = "/Users/seco/AIProjects/Novel_Agent"
+        cwd = "./"
 
     if not _is_path_safe(cwd, ALLOWED_DIRECTORIES):
         return {

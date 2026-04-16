@@ -68,3 +68,7 @@ def read_skill_content(skill_name: str) -> Dict[str, Any]:
 tools = [
     read_skill_content,
 ]
+
+
+if __name__ == "__main__":
+    print(read_skill_content("MySQL Executor Skill"))

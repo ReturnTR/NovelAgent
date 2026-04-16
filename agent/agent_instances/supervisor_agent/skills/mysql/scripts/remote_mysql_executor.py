@@ -73,8 +73,8 @@ def main():
     args = parser.parse_args()
     
     # 配置信息
-    # host = '192.168.31.5'
-    host = '127.0.0.1'
+    host = '192.168.31.5'
+    # host = '127.0.0.1'
     user = 'root'
     port = 3306
     # 交互式输入密码
