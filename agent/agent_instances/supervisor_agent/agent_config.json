@@ -59,7 +59,7 @@
     }
   ],
   "prompts": {
-    "system_prompt": "prompts/system_prompt.txt",
-    "task_prompt": "prompts/task_prompt.txt"
+    "system_prompt": "prompts/system_prompt.md",
+    "task_prompt": "prompts/task_prompt.md"
   }
 }
