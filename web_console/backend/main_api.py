@@ -22,7 +22,7 @@ from pydantic import BaseModel
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from agent.core.sessions.manager import SessionManager
+from agent.core.session.manager import SessionManager
 
 
 def setup_logging(debug: bool = False):
