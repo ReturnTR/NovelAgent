@@ -53,8 +53,8 @@ htmlcov/
 logs/
 
 # Sessions (may contain sensitive data)
-sessions/
 *.jsonl
+sessions_index.json
 
 # Byte-compiled / optimized / DLL files
 *.pyc
