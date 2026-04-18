@@ -138,6 +138,14 @@ class AgentProcessManager:
             raise FileNotFoundError(f"Agent main file not found: {main_path}")
 
         port = self.get_next_available_port()
+        
+        # 获取对应的 agent_id
+        agent_id = self.session_manager.get_agent_id(session_id)
+        if not agent_id:
+            self.logger.warning(f"No agent_id found for session {session_id}, will generate a default one")
+            # 作为后备方案
+            import time
+            agent_id = f"{agent_type}-{int(time.time() * 1000)}"
 
         try:
             env = os.environ.copy()
@@ -145,6 +153,7 @@ class AgentProcessManager:
             env["AGENT_TYPE"] = agent_type
             env["AGENT_SESSION_ID"] = session_id
             env["AGENT_NAME"] = agent_name
+            env["AGENT_ID"] = agent_id
 
             # 使用conda的agent环境启动Agent
             conda_activate = "source ~/miniconda3/bin/activate agent && "
@@ -188,18 +197,19 @@ class AgentProcessManager:
                 index_data = self.session_manager._load_index()
                 for session in index_data.get("sessions", []):
                     pid = session.get("pid")
+                    session_id = session.get("session_id") or session.get("id")
                     if pid:
                         try:
                             proc = psutil.Process(pid)
                             if not proc.is_running() and session.get("status") == "active":
                                 session["status"] = "suspended"
                                 session["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-                                self.logger.info(f"Session {session.get('id')} marked as suspended (process not running)")
+                                self.logger.info(f"Session {session_id} marked as suspended (process not running)")
                         except psutil.NoSuchProcess:
                             if session.get("status") == "active":
                                 session["status"] = "suspended"
                                 session["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-                                self.logger.info(f"Session {session.get('id')} marked as suspended (NoSuchProcess)")
+                                self.logger.info(f"Session {session_id} marked as suspended (NoSuchProcess)")
                 self.session_manager._save_index(index_data)
             except Exception as e:
                 self.logger.error(f"Error checking agent status: {e}")
@@ -242,13 +252,16 @@ class AgentService:
                 except Exception:
                     pass
 
+            # 兼容新旧两种格式的字段名
+            session_id = session.get("session_id") or session.get("id")
             agents.append({
                 "agent_type": session.get("agent_type"),
                 "agent_name": session.get("agent_name"),
+                "agent_id": session.get("agent_id"),
                 "port": port,
                 "pid": session.get("pid"),
                 "status": status,
-                "session_id": session.get("id"),
+                "session_id": session_id,
                 "updated_at": session.get("updated_at"),
                 "message_count": session.get("message_count", 0),
                 "capabilities": []
@@ -734,6 +747,22 @@ def create_app(debug: bool = False) -> tuple[FastAPI, AgentService, logging.Logg
     async def get_session_messages(session_id: str):
         messages = agent_service.session_manager.get_session_messages(session_id)
         return {"messages": messages}
+    
+    @app.delete("/api/sessions/{session_id}/messages/{message_index}")
+    async def delete_session_message(session_id: str, message_index: int):
+        """删除会话中的特定消息
+        message_index 是 messages 列表中的索引（从 0 开始）
+        """
+        try:
+            agent_service.session_manager.delete_message_by_index(session_id, message_index)
+            return {"status": "ok", "message": "Message deleted successfully"}
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Session not found")
+        except IndexError:
+            raise HTTPException(status_code=400, detail="Invalid message index")
+        except Exception as e:
+            logger.error(f"Error deleting message: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to delete message: {e}")
 
     @app.post("/api/sessions/{session_id}/messages")
     async def append_message(session_id: str, message: MessageModel):

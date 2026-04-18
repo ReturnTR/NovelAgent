@@ -196,8 +196,8 @@ async function switchAgent(sessionId) {
             chatContainer.innerHTML = '';
             
             if (messages.length > 0) {
-                messages.forEach(msg => {
-                    addMessage(msg.role, msg.content, msg.tool_calls, msg.tool_results);
+                messages.forEach((msg, index) => {
+                    addMessage(msg.role, msg.content, msg.tool_calls, msg.tool_results, index);
                 });
             } else {
                 chatContainer.innerHTML = `
@@ -330,8 +330,9 @@ async function sendMessage() {
         return;
     }
     
+    const userMessageIndex = messages.length;
     messages.push({ role: 'user', content: message });
-    addMessage('user', message);
+    addMessage('user', message, null, null, userMessageIndex);
     
     // 用户消息由服务器端保存
     
@@ -341,8 +342,9 @@ async function sendMessage() {
     disableInput(true);
     
     currentAssistantMessage = { role: 'assistant', content: '', toolCalls: [], toolResults: [] };
+    const assistantMessageIndex = messages.length;
     messages.push(currentAssistantMessage);
-    const messageElement = addMessage('assistant', '');
+    const messageElement = addMessage('assistant', '', null, null, assistantMessageIndex);
     
     try {
         console.log('Sending request to:', API_URL);
@@ -457,7 +459,7 @@ async function sendMessage() {
     }
 }
 
-function addMessage(role, content, toolCalls, toolResults) {
+function addMessage(role, content, toolCalls, toolResults, messageIndex) {
     const container = document.getElementById('chatContainer');
     
     const welcomeMessage = container.querySelector('.welcome-message');
@@ -467,6 +469,7 @@ function addMessage(role, content, toolCalls, toolResults) {
     
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
+    messageDiv.dataset.messageIndex = messageIndex;
     
     const avatar = document.createElement('div');
     avatar.className = 'avatar';
@@ -478,7 +481,15 @@ function addMessage(role, content, toolCalls, toolResults) {
     if (role === 'user') {
         bubble.textContent = content;
     } else if (role === 'tool') {
-        // Tool 消息添加折叠功能
+        // Tool 消息添加折叠功能，并格式化 JSON
+        let formattedContent = content;
+        try {
+            const parsedContent = JSON.parse(content);
+            const highlightedJson = syntaxHighlightJson(parsedContent);
+            formattedContent = `<pre>${highlightedJson}</pre>`;
+        } catch (e) {
+            // 如果解析失败，就原样展示
+        }
         bubble.innerHTML = `
             <div class="tool-message-header">
                 <span class="tool-icon">🔧</span>
@@ -486,15 +497,26 @@ function addMessage(role, content, toolCalls, toolResults) {
                 <span class="tool-toggle" onclick="toggleToolResult(this)">▼</span>
             </div>
             <div class="tool-message-content" style="display: none;">
-                ${content}
+                ${formattedContent}
             </div>
         `;
     } else {
         bubble.innerHTML = renderMarkdown(content || '思考中...');
     }
     
+    // 添加删除按钮
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'delete-message-btn';
+    deleteButton.innerHTML = '🗑️';
+    deleteButton.title = '删除此消息';
+    deleteButton.onclick = function(e) {
+        e.stopPropagation();
+        deleteMessage(messageIndex);
+    };
+    
     messageDiv.appendChild(avatar);
     messageDiv.appendChild(bubble);
+    messageDiv.appendChild(deleteButton);
     container.appendChild(messageDiv);
     
     // 处理工具调用
@@ -512,6 +534,30 @@ function addMessage(role, content, toolCalls, toolResults) {
     container.scrollTop = container.scrollHeight;
     
     return messageDiv;
+}
+
+async function deleteMessage(messageIndex) {
+    if (!currentSessionId) return;
+    
+    if (!confirm('确定要删除此消息吗？')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/sessions/${currentSessionId}/messages/${messageIndex}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            // 重新加载会话
+            await switchAgent(currentSessionId);
+            showNotification('消息已删除', 'info');
+        } else {
+            const error = await response.json();
+            showNotification(`删除失败: ${error.detail}`, 'error');
+        }
+    } catch (error) {
+        console.error('删除消息失败:', error);
+        showNotification(`删除失败: ${error.message}`, 'error');
+    }
 }
 
 function updateMessageContent(messageElement, content) {

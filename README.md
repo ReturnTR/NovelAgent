@@ -338,18 +338,13 @@ MIT License
 
 ## 改进
 1. agent冻结功能，即上下文固定，这样能保持Agent的状态，固有现有Agent功能
-
-一个agent在线实例，他和其他的agent相比，哪些有区别：
-1. skill
-2. tool
-3. prompt
-4. memory系统
-5. 上下文内容
-6. 执行工作流（这个可以统一成tool循环）
-
-
+2. 上下文应该是动态加载的，任何内容改了，文件都会变
+3. agent-ID命名混乱
 
 就看相同的agent类，不同的agent实例，之间的区别。
 1. 上下文
 2. memory
+
+
+
 

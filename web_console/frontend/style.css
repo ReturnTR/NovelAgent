@@ -427,6 +427,28 @@ body {
     text-align: left;
 }
 
+.delete-message-btn {
+    background: none;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.2s;
+    align-self: flex-start;
+    flex-shrink: 0;
+    margin-left: 8px; /* 按钮和气泡之间的间距 */
+}
+
+.message:hover .delete-message-btn {
+    opacity: 1;
+}
+
+.delete-message-btn:hover {
+    background: rgba(220, 53, 69, 0.1);
+}
+
 .bubble pre {
     background: #2d2d2d;
     color: #f8f8f2;
@@ -845,10 +867,15 @@ body.dark-theme .welcome-message .example {
     color: #d4d4d4;
 }
 
-body.dark-theme .message.assistant .bubble {
+body.dark-theme .bubble {
     background: #2d2d30;
     color: #d4d4d4;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+body.dark-theme .message.user .bubble {
+    background: #667eea;
+    color: white;
 }
 
 body.dark-theme .input-container {
@@ -980,6 +1007,10 @@ body.dark-theme .notification.error {
 body.dark-theme .notification.warning {
     background: #e0a800;
     color: #d4d4d4;
+}
+
+body.dark-theme .delete-message-btn:hover {
+    background: rgba(244, 135, 113, 0.1);
 }
 
 /* 主题切换按钮 */
@@ -1146,8 +1177,62 @@ body.dark-theme td {
     border-top: none;
     border-radius: 0 0 6px 6px;
     font-size: 14px;
+}
+
+.tool-message-content pre {
+    margin: 0;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-all;
+    background: white;
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    color: #1a1a1a;
+}
+
+.tool-result-content pre {
+    margin: 0;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: white;
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    max-height: 200px;
+    overflow-y: auto;
+    color: #1a1a1a;
+}
+
+/* JSON 语法高亮 - 浅色主题 */
+.tool-result-content pre .json-key,
+.tool-message-content pre .json-key {
+    color: #0550ae;
+}
+
+.tool-result-content pre .json-string,
+.tool-message-content pre .json-string {
+    color: #0a3069;
+}
+
+.tool-result-content pre .json-number,
+.tool-message-content pre .json-number {
+    color: #0550ae;
+}
+
+.tool-result-content pre .json-boolean,
+.tool-message-content pre .json-boolean {
+    color: #cf222e;
+}
+
+.tool-result-content pre .json-null,
+.tool-message-content pre .json-null {
+    color: #6e7781;
 }
 
 .tool-call-args {
@@ -1233,23 +1318,58 @@ body.dark-theme .tool-result-content pre {
     color: #d4d4d4;
 }
 
+body.dark-theme .tool-message-header {
+    background: #3e3e42;
+}
+
+body.dark-theme .tool-message-header .tool-message-title {
+    color: #d4d4d4;
+}
+
+body.dark-theme .tool-message-header .tool-toggle {
+    color: #999;
+}
+
+body.dark-theme .tool-message-header .tool-toggle:hover {
+    color: #d4d4d4;
+}
+
+body.dark-theme .tool-message-content {
+    background: #2d2d30;
+    border-color: #3e3e42;
+}
+
+body.dark-theme .tool-message-content pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+body.dark-theme .bubble {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
 /* JSON 语法高亮 - 深色主题 */
-body.dark-theme .tool-result-content pre .json-key {
+body.dark-theme .tool-result-content pre .json-key,
+body.dark-theme .tool-message-content pre .json-key {
     color: #9cdcfe;
 }
 
-body.dark-theme .tool-result-content pre .json-string {
+body.dark-theme .tool-result-content pre .json-string,
+body.dark-theme .tool-message-content pre .json-string {
     color: #ce9178;
 }
 
-body.dark-theme .tool-result-content pre .json-number {
+body.dark-theme .tool-result-content pre .json-number,
+body.dark-theme .tool-message-content pre .json-number {
     color: #b5cea8;
 }
 
-body.dark-theme .tool-result-content pre .json-boolean {
+body.dark-theme .tool-result-content pre .json-boolean,
+body.dark-theme .tool-message-content pre .json-boolean {
     color: #569cd6;
 }
 
-body.dark-theme .tool-result-content pre .json-null {
+body.dark-theme .tool-result-content pre .json-null,
+body.dark-theme .tool-message-content pre .json-null {
     color: #569cd6;
 }
