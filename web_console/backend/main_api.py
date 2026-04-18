@@ -20,9 +20,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(BASE_DIR))
+PROJECT_ROOT = BASE_DIR
+# 确保 agent 模块能被找到
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / 'agent'))
 
 from agent.core.session.manager import SessionManager
+from agent.core.a2a import get_registry
 
 
 def setup_logging(debug: bool = False):
@@ -142,8 +146,10 @@ class AgentProcessManager:
             env["AGENT_SESSION_ID"] = session_id
             env["AGENT_NAME"] = agent_name
 
+            # 使用conda的agent环境启动Agent
+            conda_activate = "source ~/miniconda3/bin/activate agent && "
             proc = subprocess.Popen(
-                [self._get_venv_python(), str(main_path)],
+                ["bash", "-c", conda_activate + f"cd {str(self.base_dir)} && python {str(main_path)}"],
                 env=env,
                 cwd=str(self.base_dir),
                 stdout=subprocess.DEVNULL,
@@ -228,7 +234,7 @@ class AgentService:
                 try:
                     async with aiohttp.ClientSession() as http_session:
                         async with http_session.get(
-                            f"http://localhost:{port}/health",
+                            f"http://localhost:{port}/a2a/health",
                             timeout=aiohttp.ClientTimeout(total=2)
                         ) as response:
                             if response.status == 200:
@@ -370,16 +376,10 @@ class AgentService:
                 self.logger.debug(f"Sending request to agent at port {port}")
                 async with aiohttp.ClientSession() as http_session:
                     async with http_session.post(
-                        f"http://localhost:{port}/a2a/message/stream",
+                        f"http://localhost:{port}/chat/stream",
                         json={
-                            "message_id": "msg-001",
-                            "message_type": "task_request",
-                            "sender": "user",
-                            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                            "content": {
-                                "task": message,
-                                "context": session_messages
-                            }
+                            "task": message,
+                            "context": session_messages
                         },
                         timeout=aiohttp.ClientTimeout(total=120)
                     ) as response:
@@ -491,6 +491,125 @@ def create_app(debug: bool = False) -> tuple[FastAPI, AgentService, logging.Logg
         logger.info("Application startup")
         asyncio.create_task(process_manager.check_agent_status())
 
+    # ========================================================================
+    # 注册中心接口
+    # 提供 Agent 注册、发现、搜索等功能
+    # ========================================================================
+
+    @app.get("/api/registry/agents")
+    async def registry_list_agents():
+        """
+        列出所有已注册的 Agent
+
+        返回注册中心中所有活跃的 Agent 列表
+        """
+        registry = get_registry()
+        agents = await registry.list_agents()
+        return {"count": len(agents), "agents": [agent.model_dump() for agent in agents]}
+
+    @app.get("/api/registry/agents/{agent_id}")
+    async def registry_get_agent(agent_id: str):
+        """
+        获取特定 Agent 的信息
+
+        Args:
+            agent_id: Agent ID
+
+        Returns:
+            AgentCard 信息
+        """
+        registry = get_registry()
+        agent = await registry.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return agent.model_dump()
+
+    @app.get("/api/registry/search")
+    async def registry_search_agents(keywords: Optional[str] = None, agent_type: Optional[str] = None):
+        """
+        搜索 Agent
+
+        支持关键词搜索和类型筛选：
+        - keywords: 匹配 Agent 名称、描述、能力
+        - agent_type: 按类型筛选
+
+        Args:
+            keywords: 搜索关键词
+            agent_type: Agent 类型
+        """
+        from agent.core.a2a import AgentCard
+        
+        # 第一步：从 SessionManager 获取所有活跃的 Agent
+        active_sessions = []
+        for session in agent_service.session_manager.list_sessions():
+            if session.get("status") == "active" and session.get("port"):
+                active_sessions.append(session)
+        
+        # 第二步：对每个活跃 Agent，请求它的 /a2a/.well-known/agent-card.json 获取 AgentCard
+        agents = []
+        for session in active_sessions:
+            port = session.get("port")
+            try:
+                async with aiohttp.ClientSession() as http_session:
+                    async with http_session.get(
+                        f"http://localhost:{port}/a2a/.well-known/agent-card.json",
+                        timeout=aiohttp.ClientTimeout(total=2)
+                    ) as response:
+                        if response.status == 200:
+                            agent_card_data = await response.json()
+                            agent_card = AgentCard(**agent_card_data)
+                            agents.append(agent_card)
+            except Exception as e:
+                logger.debug(f"Failed to get agent card from port {port}: {e}")
+        
+        # 第三步：应用筛选
+        filtered_agents = []
+        for agent in agents:
+            # 按类型筛选
+            if agent_type and agent.agent_type != agent_type:
+                continue
+            # 按关键词筛选
+            if keywords:
+                keywords_lower = keywords.lower()
+                match = False
+                if keywords_lower in agent.agent_name.lower():
+                    match = True
+                elif keywords_lower in agent.description.lower():
+                    match = True
+                else:
+                    for cap in agent.capabilities:
+                        if keywords_lower in cap.name.lower() or keywords_lower in cap.description.lower():
+                            match = True
+                            break
+                if not match:
+                    continue
+            filtered_agents.append(agent)
+        
+        return {"count": len(filtered_agents), "agents": [agent.model_dump() for agent in filtered_agents]}
+
+    @app.post("/api/registry/register")
+    async def registry_register_agent(request: Request):
+        """
+        注册一个新的 Agent
+
+        手动注册接口，通常 Agent 启动时自动注册
+
+        请求体：
+        {
+            "agent_id": "agent-001",
+            "agent_name": "Agent Name",
+            "agent_type": "character",
+            "endpoint": "http://localhost:8001",
+            "capabilities": [...]
+        }
+        """
+        registry = get_registry()
+        data = await request.json()
+        from agent.core.a2a import AgentCard
+        agent_card = AgentCard(**data)
+        await registry.register_agent(agent_card)
+        return {"status": "ok", "agent_id": agent_card.agent_id}
+
     @app.get("/")
     async def root():
         return FileResponse(str(BASE_DIR / "web_console" / "frontend" / "index.html"))
@@ -570,6 +689,46 @@ def create_app(debug: bool = False) -> tuple[FastAPI, AgentService, logging.Logg
         if not session:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         return session
+
+    @app.post("/api/sessions/{session_id}/agent-message")
+    async def append_agent_message(session_id: str, request: Request):
+        """
+        Agent间通信消息记录接口
+
+        让Agent可以通过HTTP调用将接收到的Agent间通信消息记录到Session中
+
+        请求体：
+        {
+            "role": "user" or "assistant",
+            "content": "消息内容",
+            "source_agent_id": "发送者Agent ID",
+            "target_agent_id": "接收者Agent ID",
+            "event_id": "事件ID（可选）",
+            "task_id": "任务ID（可选）"
+        }
+        """
+        try:
+            data = await request.json()
+            role = data.get("role", "user")
+            content = data.get("content", "")
+            source_agent_id = data.get("source_agent_id", "")
+            target_agent_id = data.get("target_agent_id", "")
+            event_id = data.get("event_id")
+            task_id = data.get("task_id")
+
+            agent_service.session_manager.append_agent_message(
+                session_id,
+                role,
+                content,
+                source_agent_id,
+                target_agent_id,
+                event_id,
+                task_id
+            )
+
+            return {"status": "ok", "message": "Agent message appended"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/api/sessions/{session_id}/messages")
     async def get_session_messages(session_id: str):

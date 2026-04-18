@@ -105,6 +105,32 @@ class SessionManager:
 
         self._update_message_count(session_id)
     
+    def append_agent_message(self, session_id: str, role: str, content: str, source_agent_id: str, target_agent_id: str, event_id: Optional[str] = None, task_id: Optional[str] = None):
+        """追加Agent间通信消息到会话文件"""
+        session_file = self.base_dir / f"{session_id}.jsonl"
+
+        if not session_file.exists():
+            raise FileNotFoundError(f"Session file not found: {session_file}")
+
+        message_event = {
+            "type": "agent",
+            "role": role,
+            "content": content,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "source_agent_id": source_agent_id,
+            "target_agent_id": target_agent_id
+        }
+
+        if event_id:
+            message_event["event_id"] = event_id
+        if task_id:
+            message_event["task_id"] = task_id
+
+        with open(session_file, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(message_event, ensure_ascii=False) + '\n')
+
+        self._update_message_count(session_id)
+    
     def get_session(self, session_id: str) -> Optional[Dict]:
         """获取会话详情"""
         session_file = self.base_dir / f"{session_id}.jsonl"
@@ -122,7 +148,7 @@ class SessionManager:
             return None
         
         session_metadata = events[0]
-        messages = [e for e in events[1:] if e.get('type') == 'message']
+        messages = [e for e in events[1:] if e.get('type') in ['message', 'agent']]
         
         index_data = self._load_index()
         index_entry = next(
@@ -145,7 +171,7 @@ class SessionManager:
         }
     
     def get_session_messages(self, session_id: str) -> List[Dict]:
-        """获取会话的所有消息"""
+        """获取会话的所有消息（包括用户消息和Agent间消息）"""
         session = self.get_session(session_id)
         if not session:
             return []
@@ -211,7 +237,7 @@ class SessionManager:
         self._save_index(index_data)
     
     def _update_message_count(self, session_id: str):
-        """更新会话消息数量"""
+        """更新会话消息数量（统计所有类型的消息）"""
         session_file = self.base_dir / f"{session_id}.jsonl"
         
         if not session_file.exists():
@@ -222,7 +248,7 @@ class SessionManager:
             for line in f:
                 if line.strip():
                     event = json.loads(line)
-                    if event.get('type') == 'message':
+                    if event.get('type') in ['message', 'agent']:
                         message_count += 1
         
         self._update_session_in_index(session_id, {
