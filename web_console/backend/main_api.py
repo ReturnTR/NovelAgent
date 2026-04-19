@@ -347,6 +347,13 @@ class AgentService:
         }
         self.logger.info(f"Agent {session_id} resumed: {result}")
         return result
+    
+    def update_agent_name(self, session_id: str, new_name: str) -> Dict[str, Any]:
+        """更新Agent名字"""
+        self.logger.info(f"Updating agent name: session_id={session_id}, new_name={new_name}")
+        self.session_manager.update_session_agent_name(session_id, new_name)
+        self.logger.info(f"Agent name updated: session_id={session_id}, new_name={new_name}")
+        return {"status": "ok", "message": f"Agent name updated to {new_name}"}
 
     def delete_agent(self, session_id: str) -> Dict[str, Any]:
         """删除Agent"""
@@ -470,6 +477,9 @@ class ChatMessage(BaseModel):
 
 class CreateAgentRequest(BaseModel):
     agent_type: str
+    agent_name: str
+
+class UpdateAgentNameRequest(BaseModel):
     agent_name: str
 
 
@@ -652,6 +662,14 @@ def create_app(debug: bool = False) -> tuple[FastAPI, AgentService, logging.Logg
     async def resume_agent(session_id: str):
         try:
             result = agent_service.resume_agent(session_id)
+            return result
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.patch("/api/agents/{session_id}/name")
+    async def update_agent_name(session_id: str, request: UpdateAgentNameRequest):
+        try:
+            result = agent_service.update_agent_name(session_id, request.agent_name)
             return result
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))

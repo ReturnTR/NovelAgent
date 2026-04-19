@@ -332,6 +332,23 @@ class SessionManager:
                 session["updated_at"] = datetime.utcnow().isoformat() + "Z"
 
         self._save_index(index_data)
+    
+    def update_session_agent_name(self, session_id: str, new_name: str):
+        """通过session_id更新特定会话的agent_name"""
+        index_data = self._load_index()
+        found = False
+        
+        for session in index_data["sessions"]:
+            if session.get("session_id") == session_id or session.get("id") == session_id:
+                session["agent_name"] = new_name
+                session["updated_at"] = datetime.utcnow().isoformat() + "Z"
+                found = True
+                break
+        
+        if not found:
+            raise ValueError(f"Session not found with id: {session_id}")
+        
+        self._save_index(index_data)
 
     def update_session_port_pid(self, session_id: str, port: int, pid: int):
         """更新session的端口和进程ID"""

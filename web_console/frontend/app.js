@@ -121,12 +121,30 @@ function renderMarkdown(content) {
     return marked.parse(content);
 }
 
+let isComposing = false; // 标记是否正在输入法输入中
+
 function handleKeyDown(event) {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    // 如果正在输入法输入中，或者按的是 Shift+Enter，不发送消息
+    if (event.key === 'Enter' && !event.shiftKey && !isComposing) {
         event.preventDefault();
         sendMessage();
     }
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    const messageInput = document.getElementById('messageInput');
+    if (messageInput) {
+        // 监听输入法开始输入
+        messageInput.addEventListener('compositionstart', function() {
+            isComposing = true;
+        });
+        
+        // 监听输入法结束输入
+        messageInput.addEventListener('compositionend', function() {
+            isComposing = false;
+        });
+    }
+});
 
 async function loadAgents() {
     try {
@@ -275,11 +293,57 @@ function startEditAgentName(event, sessionId, currentName) {
 }
 
 async function saveAgentName(sessionId) {
-    loadAgents();
+    try {
+        // 获取输入框中的新名字
+        const agentItem = document.querySelector('.agent-item[data-session-id="' + sessionId + '"]');
+        const input = agentItem.querySelector('input');
+        const newName = input.value.trim();
+        
+        if (!newName) {
+            // 如果名字为空，取消编辑
+            cancelEditAgentName(sessionId);
+            return;
+        }
+        
+        // 调用后端接口更新名字
+        const response = await fetch(`${AGENTS_API}/${sessionId}/name`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                agent_name: newName
+            })
+        });
+        
+        if (response.ok) {
+            showNotification('名字更新成功', 'success');
+            await loadAgents();
+        } else {
+            showNotification('名字更新失败', 'error');
+            await loadAgents();
+        }
+    } catch (error) {
+        console.error('更新名字失败:', error);
+        showNotification('更新失败: ' + error.message, 'error');
+        await loadAgents();
+    }
 }
 
 function cancelEditAgentName(sessionId) {
-    loadAgents();
+    try {
+        const agentItem = document.querySelector('.agent-item[data-session-id="' + sessionId + '"]');
+        const agentNameElement = agentItem.querySelector('.agent-name');
+        const originalName = agentNameElement.dataset.originalName;
+        
+        // 恢复原始内容
+        agentNameElement.textContent = originalName;
+        
+        loadAgents();
+    } catch (error) {
+        console.error('取消编辑失败:', error);
+        loadAgents();
+    }
 }
 
 async function createAgent() {
