@@ -65,6 +65,7 @@ class EventType(str, Enum):
     AGENT_UNREGISTER = "agent_unregister"
     HEARTBEAT = "heartbeat"
     ERROR = "error"
+    USER_MESSAGE = "user_message"  # Web Console 发起的用户消息
 
 
 class A2AEvent(BaseModel):
