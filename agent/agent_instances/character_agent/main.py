@@ -15,9 +15,13 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from cores.character_agent import CharacterAgent
+
+from agent.core.a2a import A2AEventHandler
+from agent.core.a2a.types import A2AEvent, EventType
 
 # 创建 FastAPI 应用
 app = FastAPI()
@@ -43,10 +47,36 @@ agent_dir = Path(__file__).parent
 # 3. 构建 LangGraph
 agent = CharacterAgent(str(agent_dir), agent_id=agent_id, port=port)
 
+# 创建 A2AEventHandler
+handler = A2AEventHandler(
+    agent=agent,
+    session_dir=str(Path(__file__).parent / "sessions")
+)
+
 # 将 A2A 服务端路由挂载到 /a2a 路径
 # 这样 A2A 事件端点（如 /a2a/event）就可以使用了
 a2a_app = agent.get_a2a_app()
 app.mount("/a2a", a2a_app)
+
+
+@a2a_app.post("/event")
+async def handle_event(request: Request):
+    """A2A 事件处理端点"""
+    data = await request.json()
+    event = A2AEvent(**data)
+
+    if event.event_type == EventType.USER_MESSAGE:
+        task = event.content.get("task", "")
+        session_id = event.content.get("session_id", os.getenv("AGENT_SESSION_ID", "default"))
+        return StreamingResponse(
+            handler.handle_user_message(task, session_id),
+            media_type="text/event-stream"
+        )
+    else:
+        return StreamingResponse(
+            handler.handle_event(event),
+            media_type="text/event-stream"
+        )
 
 
 @app.on_event("startup")
@@ -60,6 +90,26 @@ async def startup():
     # 将当前 Agent 注册到注册中心
     # 这样其他 Agent（如 Supervisor）就可以发现并与它通信
     await agent.register_with_registry()
+
+
+@app.get("/session/{session_id}/history")
+async def get_session_history(session_id: str):
+    """获取指定 session 的历史消息"""
+    messages = handler.get_session_history(session_id)
+    return {"session_id": session_id, "messages": messages}
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: Request):
+    """流式聊天接口 - 通过 Handler 处理"""
+    data = await request.json()
+    task = data.get("task", "")
+    session_id = data.get("session_id", os.getenv("AGENT_SESSION_ID", "default"))
+
+    return StreamingResponse(
+        handler.handle_user_message(task, session_id),
+        media_type="text/event-stream"
+    )
 
 
 if __name__ == "__main__":

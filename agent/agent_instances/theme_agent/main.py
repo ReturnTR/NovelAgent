@@ -1,11 +1,10 @@
 """
-Supervisor Agent 启动入口
+Theme Agent 启动入口
 
 负责：
-1. 创建 SupervisorAgent 实例
+1. 创建 ThemeAgent 实例
 2. 挂载 A2A 服务端路由
 3. 启动时自动注册到注册中心
-4. 提供 /chat/stream 接口处理用户对话
 """
 
 import os
@@ -19,7 +18,7 @@ sys.path.insert(0, str(project_root))
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from cores.supervisor_agent import SupervisorAgent
+from cores.theme_agent import ThemeAgent
 
 from agent.core.a2a import A2AEventHandler
 from agent.core.a2a.types import A2AEvent, EventType
@@ -37,16 +36,16 @@ app.add_middleware(
 )
 
 # 从环境变量读取配置，或使用默认值
-agent_id = os.getenv("AGENT_ID", "supervisor-001")
-port = int(os.getenv("AGENT_PORT", 8001))
+agent_id = os.getenv("AGENT_ID", "theme-001")
+port = int(os.getenv("AGENT_PORT", 8003))
 agent_dir = Path(__file__).parent
 
-# 创建 SupervisorAgent 实例
+# 创建 ThemeAgent 实例
 # 内部会：
 # 1. 加载配置和工具
 # 2. 初始化 A2A 客户端和服务端
 # 3. 构建 LangGraph
-agent = SupervisorAgent(str(agent_dir), agent_id=agent_id, port=port)
+agent = ThemeAgent(str(agent_dir), agent_id=agent_id, port=port)
 
 # 创建 A2AEventHandler
 handler = A2AEventHandler(
@@ -83,13 +82,13 @@ async def handle_event(request: Request):
 @app.on_event("startup")
 async def startup():
     """Agent 启动时的初始化操作"""
-    print(f"Supervisor Agent 启动: {agent_id} (端口: {port})")
+    print(f"Theme Agent 启动: {agent_id} (端口: {port})")
     print(f"Capabilities: {[c['name'] for c in agent.capabilities]}")
     tool_names = [getattr(t, "name", type(t).__name__) for t in agent.tools]
     print(f"Loaded tools: {tool_names}")
 
     # 将当前 Agent 注册到注册中心
-    # 这样其他 Agent 就可以发现并与它通信
+    # 这样其他 Agent（如 Supervisor）就可以发现并与它通信
     await agent.register_with_registry()
 
 
