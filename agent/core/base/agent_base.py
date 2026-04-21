@@ -14,7 +14,7 @@ BaseAgent - 所有 Agent 的基类
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, TypedDict, Annotated, Callable
+from typing import Dict, List, Any, Optional, TypedDict, Annotated, Callable, AsyncIterator
 from pathlib import Path
 import json
 import os
@@ -30,18 +30,18 @@ load_dotenv()
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage, ToolMessage, AIMessageChunk
 from langchain_core.tools import BaseTool, tool
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
+import openai
 
 from agent.core.a2a import (
     AgentCapability,
     AgentCard,
-    A2AEvent,
-    EventType,
     init_a2a_client,
     get_a2a_client,
-    create_a2a_tools,
-    A2AEventServer
+    create_a2a_tools
 )
 
 
@@ -133,6 +133,145 @@ class SkillManager:
 
 
 # ============================================================================
+# 支持思考模式的 LLM 包装类
+# ============================================================================
+
+class ReasoningChatOpenAI(ChatOpenAI):
+    """
+    支持 reasoning_content 的 ChatOpenAI 包装类
+
+    用于 Kimi k2.5 等支持思考模式的模型。
+    通过重写 _generate 和 _agenerate 方法来提取 reasoning_content。
+    """
+
+    def _generate(
+        self,
+        messages: list,
+        stop: Optional[list] = None,
+        run_manager: Optional["CallbackManagerForLLMRun"] = None,
+        **kwargs
+    ) -> ChatResult:
+        """
+        重写 _generate 方法，提取 reasoning_content
+
+        Args:
+            messages: 输入消息列表
+            stop: 停止词
+            run_manager: 回调管理器
+
+        Returns:
+            ChatResult
+        """
+        self._ensure_sync_client_available()
+        payload = self._get_request_payload(messages, stop=stop, **kwargs)
+        # 注入 reasoning_content（LangChain 的 _convert_message_to_dict 不处理此字段）
+        for i, msg_dict in enumerate(payload.get("messages", [])):
+            if i < len(messages):
+                msg = messages[i]
+                rc = getattr(msg, "reasoning_content", None) or msg.additional_kwargs.get("reasoning_content", None)
+                if rc:
+                    msg_dict["reasoning_content"] = rc
+                # 修复：content 为空的 assistant 消息，如果同时有 tool_calls 但没有对应响应，API 会报错
+                # 这种消息来自 context 重建，我们将其 tool_calls 清空，避免 API 报错
+                if msg_dict.get("role") == "assistant" and not msg_dict.get("content") and msg_dict.get("tool_calls"):
+                    msg_dict["tool_calls"] = []
+        generation_info = None
+        raw_response = None
+
+        try:
+            raw_response = self.client.with_raw_response.create(**payload)
+            response = raw_response.parse()
+        except openai.BadRequestError as e:
+            raise ValueError(f"OpenAI BadRequestError: {e}") from e
+        except openai.APIError as e:
+            raise ValueError(f"OpenAI APIError: {e}") from e
+        except Exception as e:
+            if raw_response is not None and hasattr(raw_response, "http_response"):
+                e.response = raw_response.http_response
+            raise e
+
+        if self.include_response_headers and raw_response is not None:
+            if hasattr(raw_response, "headers"):
+                generation_info = {"headers": dict(raw_response.headers)}
+
+        result = self._create_chat_result(response, generation_info)
+
+        for i, generation in enumerate(result.generations):
+            if isinstance(generation, ChatGeneration):
+                if i < len(response.choices):
+                    reasoning_content = getattr(response.choices[i].message, "reasoning_content", None)
+                    if reasoning_content:
+                        generation.message.additional_kwargs["reasoning_content"] = reasoning_content
+
+        return result
+
+    async def _agenerate(
+        self,
+        messages: list,
+        stop: Optional[list] = None,
+        run_manager: Optional["CallbackManagerForLLMRun"] = None,
+        **kwargs
+    ) -> ChatResult:
+        """
+        异步版本的 _generate，提取 reasoning_content
+
+        Args:
+            messages: 输入消息列表
+            stop: 停止词
+            run_manager: 回调管理器
+
+        Returns:
+            ChatResult
+        """
+        await self._ensure_async_client_available()
+        payload = self._get_request_payload(messages, stop=stop, **kwargs)
+        # 注入 reasoning_content
+        for i, msg_dict in enumerate(payload.get("messages", [])):
+            if i < len(messages):
+                msg = messages[i]
+                rc = getattr(msg, "reasoning_content", None) or msg.additional_kwargs.get("reasoning_content", None)
+                if rc:
+                    msg_dict["reasoning_content"] = rc
+        generation_info = None
+        raw_response = None
+
+        try:
+            raw_response = await self.async_client.with_raw_response.create(**payload)
+            response = raw_response.parse()
+        except openai.BadRequestError as e:
+            raise ValueError(f"OpenAI BadRequestError: {e}") from e
+        except openai.APIError as e:
+            raise ValueError(f"OpenAI APIError: {e}") from e
+        except Exception as e:
+            if raw_response is not None and hasattr(raw_response, "http_response"):
+                e.response = raw_response.http_response
+            raise e
+
+        if self.include_response_headers and raw_response is not None:
+            if hasattr(raw_response, "headers"):
+                generation_info = {"headers": dict(raw_response.headers)}
+
+        result = self._create_chat_result(response, generation_info)
+
+        for i, generation in enumerate(result.generations):
+            if isinstance(generation, ChatGeneration):
+                if i < len(response.choices):
+                    reasoning_content = getattr(response.choices[i].message, "reasoning_content", None)
+                    if reasoning_content:
+                        generation.message.additional_kwargs["reasoning_content"] = reasoning_content
+
+        return result
+
+    def _inject_reasoning_content(self, payload: dict, messages: list) -> None:
+        """将 reasoning_content 注入到 payload 的每条消息中"""
+        for i, msg_dict in enumerate(payload.get("messages", [])):
+            if i < len(messages):
+                msg = messages[i]
+                rc = getattr(msg, "reasoning_content", None) or msg.additional_kwargs.get("reasoning_content", None)
+                if rc:
+                    msg_dict["reasoning_content"] = rc
+
+# ============================================================================
 # LangGraph 节点工厂
 # ============================================================================
 
@@ -200,16 +339,96 @@ class NodeFactory:
             # 添加用户消息
             messages.extend(state["messages"])
 
-            # 调用 LLM
+            # 检查是否只需要执行工具而不需要 LLM 再次调用
+            # 如果状态中包含 ToolMessage（工具已执行），且 AIMessage 也有有效 tool_calls
+            has_tool_results = any(isinstance(m, ToolMessage) for m in messages)
+            has_valid_tc_in_state = any(
+                isinstance(m, AIMessage) and getattr(m, "tool_calls", None) and any(
+                    (isinstance(t, dict) and t.get("id")) or (hasattr(t, "id") and t.id)
+                    for t in getattr(m, "tool_calls", [])
+                )
+                for m in messages
+            )
+            # 如果有工具结果但没有有效的 tool_calls，说明工具已执行完，需要 LLM 生成最终回复
+            if has_tool_results and not has_valid_tc_in_state:
+                # 只有工具结果，让 LLM 处理生成最终回复
+                pass  # 继续调用 LLM
+            elif has_tool_results and has_valid_tc_in_state:
+                # 有工具结果且有有效 tool_calls，说明刚进入 graph，需要执行工具
+                return {
+                    "messages": messages,
+                    "current_task": state["current_task"],
+                    "context": state.get("context", {}),
+                    "skills_used": [],
+                    "received_events": state.get("received_events", [])
+                }
+
+            # 过滤掉空消息（content 为空且没有有效 tool_calls 的 assistant 消息会导致 API 错误）
+            filtered = []
+            for m in messages:
+                if isinstance(m, AIMessage):
+                    has_content = bool(m.content)
+                    has_tc = getattr(m, "tool_calls", None)
+                    has_valid_tc = has_tc and any(
+                        (isinstance(t, dict) and t.get("id")) or (hasattr(t, "id") and t.id)
+                        for t in has_tc
+                    ) if has_tc else False
+                    if not has_content and not has_valid_tc:
+                        continue
+                filtered.append(m)
+            messages = filtered
+
+            # 如果过滤后消息为空，且最后的 assistant 消息是空的 tool_call 占位，直接返回空响应
+            if not messages:
+                return {
+                    "messages": [],
+                    "current_task": state["current_task"],
+                    "context": state.get("context", {}),
+                    "skills_used": [],
+                    "received_events": []
+                }
+
+            # 调用 LLM（非流式，用于状态更新）
             response = llm.invoke(messages)
 
             return {
-                "messages": [response],
+                "messages": [response],  # 只返回新响应，不累积旧消息
                 "current_task": state["current_task"],
                 "context": state.get("context", {}),
                 "skills_used": [],
                 "received_events": []  # 清空已处理的事件
             }
+
+        async def model_node_streaming(state: AgentState):
+            """流式版本的 model_node，每个 token 实时 yield"""
+            # 获取技能元数据
+            skills_metadata = load_skills_metadata_fn()
+
+            messages = []
+            system_prompt = load_prompt_fn("system_prompt")
+
+            if system_prompt:
+                if skills_metadata:
+                    skill_intro = "\n".join([f"- **{m.name}**: {m.description}" for m in skills_metadata])
+                    system_content = system_prompt + "\n\n可用技能:\n" + skill_intro
+                else:
+                    system_content = system_prompt
+                messages.append(SystemMessage(content=system_content))
+
+            # 注入收到的 A2A 事件
+            if state.get("received_events"):
+                events_summary = "\n".join([
+                    f"- [{e.get('event_type')}] from {e.get('source')}: {e.get('content', '')}"
+                    for e in state["received_events"]
+                ])
+                events_msg = f"\n\n最近收到的 Agent 事件:\n{events_summary}"
+                if messages and isinstance(messages[0], SystemMessage):
+                    messages[0] = SystemMessage(content=messages[0].content + events_msg)
+                else:
+                    messages.append(SystemMessage(content=events_msg))
+
+            # 添加用户消息
+            messages.extend(state["messages"])
 
         return model_node
 
@@ -288,11 +507,29 @@ class NodeFactory:
         """
 
         def tools_condition(state: AgentState) -> str:
+            last_message = state["messages"][-1] if state["messages"] else None
+            tc = getattr(last_message, "tool_calls", None) if last_message else None
+            has_tool_result = any(isinstance(m, ToolMessage) for m in state["messages"])
+
             if not tools:
                 return "end"
 
-            last_message = state["messages"][-1] if state["messages"] else None
-            if last_message and hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            # 检查 tool_calls 是否有实际内容（有 id 的才算是有效的工具调用）
+            has_valid_tc = False
+            if tc and last_message and hasattr(last_message, "tool_calls") and last_message.tool_calls:
+                for t in last_message.tool_calls:
+                    tc_id = t.get("id") if isinstance(t, dict) else getattr(t, "id", None)
+                    if tc_id:
+                        has_valid_tc = True
+                        break
+
+            # 如果已有 ToolMessage 且没有有效 tool_calls，说明工具已执行完
+            if has_tool_result and not has_valid_tc:
+                return "end"
+            # 如果已有 ToolMessage 且有有效 tool_calls，说明是第一轮或需要重新执行
+            if has_tool_result and has_valid_tc:
+                return "end"  # 工具已执行过，不再重复执行
+            if has_valid_tc:
                 return "tool_node"
             return "end"
 
@@ -324,11 +561,15 @@ class BaseAgent(ABC):
             port: Agent 服务端口
         """
         self.agent_dir = Path(agent_dir)
+        os.environ["AGENT_DIR"] = str(self.agent_dir.resolve())
+        
         self.config = self._load_config()
         self.agent_type = self.config["agent_type"]
         self.agent_name = self.config["agent_name"]
         self.capabilities = self.config.get("capabilities", [])
         self.skills = self._load_skills()
+        
+        os.environ["AGENT_SKILLS_DIR"] = str((self.agent_dir / "skills").resolve())
 
         # A2A 相关
         self.agent_id = agent_id or f"{self.agent_type}-{str(uuid.uuid4())[:8]}"
@@ -336,23 +577,15 @@ class BaseAgent(ABC):
         self.endpoint = f"http://localhost:{port}"
         self.agent_card = self._build_agent_card()
 
-        # Session 相关
-        self.session_id = os.getenv("AGENT_SESSION_ID")
-        self.registry_endpoint = "http://localhost:8000"
-
-        # A2A 初始化（先初始化，再加载工具）
+        # A2A 客户端初始化
         self._init_a2a_client()
-        self._init_a2a_event_server()
 
-        # 加载工具（需要A2A客户端）
+        # 加载工具
         self.tools = self._load_tools()
 
         # LangGraph
         self.llm = self._init_llm()
         self.graph = self._build_graph()
-
-        # 待处理的 A2A 事件
-        self.pending_events: List[A2AEvent] = []
 
     def _build_agent_card(self) -> AgentCard:
         """
@@ -396,19 +629,6 @@ class BaseAgent(ABC):
         )
         print(f"[BaseAgent] A2A Client initialized for {self.agent_id}")
 
-    def _init_a2a_event_server(self):
-        """
-        初始化 A2A 事件服务器
-
-        创建 A2AEventServer 实例，用于接收消息
-        """
-        self.event_server = A2AEventServer(
-            self_agent_card=self.agent_card,
-            on_event_received=self._on_event_received,
-            on_task_request=self._on_task_request
-        )
-        print(f"[BaseAgent] A2A Event Server initialized for {self.agent_id}")
-
     def _load_config(self) -> Dict[str, Any]:
         """
         加载 Agent 配置文件
@@ -427,12 +647,32 @@ class BaseAgent(ABC):
         """
         加载工具
 
-        从 tools/ 目录加载自定义工具，并添加 A2A 工具
+        1. 从配置文件的 tools 列表加载集中管理的工具
+        2. 从 agent_dir/tools/ 目录加载额外工具（可选）
+        3. 添加 A2A 工具
 
         Returns:
             工具列表
         """
         tools = []
+        
+        # 1. 从配置文件加载集中管理的工具
+        tools_config = self.config.get("tools", [])
+        for tool_config in tools_config:
+            module_name = tool_config.get("module")
+            if not module_name:
+                continue
+            try:
+                import importlib
+                module = importlib.import_module(module_name)
+                if hasattr(module, "tools"):
+                    for func in module.tools:
+                        tools.append(func)
+                print(f"[BaseAgent] Loaded tool from {module_name}")
+            except Exception as e:
+                print(f"[BaseAgent] Failed to load tool from {module_name}: {e}")
+        
+        # 2. 从 agent_dir/tools/ 目录加载额外工具（可选，向后兼容）
         tools_dir = self.agent_dir / "tools"
         if tools_dir.exists():
             for tool_file in tools_dir.glob("*.py"):
@@ -449,9 +689,9 @@ class BaseAgent(ABC):
                             for func in module.tools:
                                 tools.append(func)
                     except Exception as e:
-                        print(f"加载工具失败 {tool_file}: {e}")
+                        print(f"[BaseAgent] Failed to load local tool {tool_file}: {e}")
 
-        # 添加 A2A 工具
+        # 3. 添加 A2A 工具
         try:
             a2a_tools = create_a2a_tools()
             tools.extend(a2a_tools)
@@ -476,7 +716,7 @@ class BaseAgent(ABC):
         初始化 LLM
 
         Returns:
-            ChatOpenAI 实例
+            ReasoningChatOpenAI 实例
         """
         model_config = self.config.get("model", {})
 
@@ -486,7 +726,7 @@ class BaseAgent(ABC):
         temperature = model_config.get("temperature", 0.7)
         max_tokens = model_config.get("max_tokens", 4000)
 
-        llm = ChatOpenAI(
+        llm = ReasoningChatOpenAI(
             api_key=api_key,
             base_url=api_base,
             model=model_id,
@@ -586,128 +826,6 @@ class BaseAgent(ABC):
                 return f.read()
         return ""
 
-    def _get_session_messages(self) -> List[Dict]:
-        """
-        从Session中获取所有消息（包括用户消息和Agent间消息）
-
-        通过HTTP调用Web Console Backend的API接口
-
-        Returns:
-            消息列表
-        """
-        if not self.session_id:
-            print(f"[BaseAgent] No session_id, returning empty messages")
-            return []
-
-        try:
-            import requests
-            url = f"{self.registry_endpoint}/api/sessions/{self.session_id}/messages"
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("messages", [])
-            else:
-                print(f"[BaseAgent] Failed to get session messages: {response.status_code} - {response.text}")
-                return []
-        except Exception as e:
-            print(f"[BaseAgent] Error getting session messages: {e}")
-            return []
-
-    def _append_agent_message_to_session(self, role: str, content: str, source_agent_id: str, target_agent_id: str, event_id: Optional[str] = None, task_id: Optional[str] = None):
-        """
-        将Agent间通信消息记录到Session中
-
-        通过HTTP调用Web Console Backend的API接口
-
-        Args:
-            role: 消息角色（user/assistant）
-            content: 消息内容
-            source_agent_id: 发送者Agent ID
-            target_agent_id: 接收者Agent ID
-            event_id: 事件ID（可选）
-            task_id: 任务ID（可选）
-        """
-        if not self.session_id:
-            print(f"[BaseAgent] No session_id, skipping agent message recording")
-            return
-
-        try:
-            import requests
-            url = f"{self.registry_endpoint}/api/sessions/{self.session_id}/agent-message"
-            data = {
-                "role": role,
-                "content": content,
-                "source_agent_id": source_agent_id,
-                "target_agent_id": target_agent_id
-            }
-            if event_id:
-                data["event_id"] = event_id
-            if task_id:
-                data["task_id"] = task_id
-            
-            response = requests.post(url, json=data, timeout=5)
-            if response.status_code == 200:
-                print(f"[BaseAgent] Agent message recorded to session: {self.session_id}")
-            else:
-                print(f"[BaseAgent] Failed to record agent message: {response.status_code} - {response.text}")
-        except Exception as e:
-            print(f"[BaseAgent] Error recording agent message: {e}")
-
-    def _on_event_received(self, event: A2AEvent):
-        """
-        收到 A2A 事件的回调
-
-        将事件存入 pending_events 队列，并记录到Session中
-
-        Args:
-            event: 收到的事件
-        """
-        print(f"[BaseAgent] Received event: {event.event_id} type={event.event_type}")
-        self.pending_events.append(event)
-
-        # 如果是TASK_REQUEST事件，将消息记录到Session中
-        if event.event_type == EventType.TASK_REQUEST:
-            task = event.content.get("task", "")
-            self._append_agent_message_to_session(
-                role="user",
-                content=task,
-                source_agent_id=event.source,
-                target_agent_id=event.target,
-                event_id=event.event_id,
-                task_id=event.task_id
-            )
-
-    async def _on_task_request(self, event: A2AEvent) -> Any:
-        """
-        收到任务请求的回调
-
-        Args:
-            event: TASK_REQUEST 事件
-
-        Returns:
-            任务处理结果
-        """
-        print(f"[BaseAgent] Handling task request: {event.event_id}")
-        task = event.content.get("task", "")
-        
-        # 从Session中获取完整的上下文（包括用户消息和Agent间消息）
-        session_messages = self._get_session_messages()
-        
-        result = await self.process_task(task, {"session_messages": session_messages})
-        
-        # 将响应消息也记录到Session中
-        result_content = result.get("message", "")
-        self._append_agent_message_to_session(
-            role="assistant",
-            content=result_content,
-            source_agent_id=self.agent_id,
-            target_agent_id=event.source,
-            event_id=event.event_id,
-            task_id=event.task_id
-        )
-        
-        return result
-
     async def register_with_registry(self):
         """
         将当前 Agent 注册到注册中心
@@ -736,9 +854,8 @@ class BaseAgent(ABC):
         处理任务（同步模式）
 
         流程：
-        1. 从 pending_events 取出事件加入状态
-        2. 执行 LangGraph
-        3. 返回结果
+        1. 执行 LangGraph
+        2. 返回结果
 
         Args:
             task: 任务描述
@@ -747,18 +864,9 @@ class BaseAgent(ABC):
         Returns:
             处理结果字典
         """
-        # 取出待处理的事件
-        received_events_list = []
-        while self.pending_events:
-            event = self.pending_events.pop(0)
-            received_events_list.append({
-                "event_id": event.event_id,
-                "event_type": event.event_type,
-                "source": event.source,
-                "content": event.content
-            })
-
         # 构建初始状态
+        received_events_list = []
+
         initial_state: AgentState = {
             "messages": [HumanMessage(content=task)],
             "current_task": task,
@@ -799,19 +907,9 @@ class BaseAgent(ABC):
         except (ImportError, AttributeError):
             stream_mode = "values"
 
-        # 取出待处理的事件
-        received_events_list = []
-        while self.pending_events:
-            event = self.pending_events.pop(0)
-            received_events_list.append({
-                "event_id": event.event_id,
-                "event_type": event.event_type,
-                "source": event.source,
-                "content": event.content
-            })
-
         # 构建消息列表
         messages = []
+        received_events_list = []
         if context and isinstance(context, list):
             for msg in context:
                 if msg.get("role") == "user":
@@ -819,24 +917,44 @@ class BaseAgent(ABC):
                 elif msg.get("role") == "assistant":
                     content = msg.get("content", "")
                     tool_calls = msg.get("tool_calls", [])
-                    tool_calls_objects = []
+                    # 收集已有 tool 响应
+                    existing_tool_ids = set()
+                    for m in context:
+                        if m.get("role") == "tool":
+                            existing_tool_ids.add(m.get("tool_call_id"))
+                    # 过滤出已有响应的 tool_calls
+                    valid_tool_calls = []
                     for tc in tool_calls:
                         if isinstance(tc, dict):
-                            tool_calls_objects.append({
-                                "id": tc.get("id"),
-                                "name": tc.get("name"),
-                                "args": tc.get("arguments", tc.get("args", {}))
+                            tc_id = tc.get("id")
+                            if tc_id and tc_id in existing_tool_ids:
+                                # 规范化为 {id, name, args}，去掉 arguments 避免 LangChain 报错
+                                valid_tool_calls.append({
+                                    "id": tc_id,
+                                    "name": tc.get("name", ""),
+                                    "args": tc.get("args", tc.get("arguments", {}))
+                                })
+                        elif tc and tc in existing_tool_ids:
+                            valid_tool_calls.append({
+                                "id": tc,
+                                "name": "",
+                                "args": {}
                             })
+                    # 跳过空消息（没有有效内容也没有有效工具调用）
+                    if not content and not valid_tool_calls:
+                        continue
                     messages.append(AIMessage(
-                        content=content,
-                        tool_calls=tool_calls_objects if tool_calls_objects else []
+                        content=content or "tool call",
+                        tool_calls=valid_tool_calls,
+                        reasoning_content=msg.get("reasoning_content") or ""
                     ))
                 elif msg.get("role") == "tool":
                     tool_call_id = msg.get("tool_call_id")
                     if tool_call_id:
                         messages.append(ToolMessage(
                             content=msg.get("content", ""),
-                            tool_call_id=tool_call_id
+                            tool_call_id=tool_call_id,
+                            additional_kwargs={"reasoning_content": ""}
                         ))
 
         messages.append(HumanMessage(content=task))
@@ -849,63 +967,102 @@ class BaseAgent(ABC):
             "received_events": received_events_list
         }
 
-        # 流式执行
-        last_event = None
-        async for event in self.graph.astream(initial_state, stream_mode=stream_mode):
-            last_event = event
-            messages = event.get("messages", [])
-            if not messages:
-                continue
+        # ========== 第一步：LLM 生成 + 实时流式输出 ==========
+        # 加载技能元数据
+        skills_metadata = self.get_all_skills_metadata()
+        system_prompt = self.load_prompt("system_prompt")
+        if system_prompt:
+            if skills_metadata:
+                skill_intro = "\n".join([f"- **{m.name}**: {m.description}" for m in skills_metadata])
+                system_content = system_prompt + "\n\n可用技能:\n" + skill_intro
+            else:
+                system_content = system_prompt
+            messages.insert(0, SystemMessage(content=system_content))
 
-            last_message = messages[-1]
+        # 注入 A2A 事件
+        if received_events_list:
+            events_summary = "\n".join([
+                f"- [{e.get('event_type')}] from {e.get('source')}: {e.get('content', '')}"
+                for e in received_events_list
+            ])
+            events_msg = f"\n\n最近收到的 Agent 事件:\n{events_summary}"
+            if messages and isinstance(messages[0], SystemMessage):
+                messages[0] = SystemMessage(content=messages[0].content + events_msg)
 
-            # 根据消息类型生成事件
-            if isinstance(last_message, AIMessage):
-                if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-                    tool_calls_list = []
-                    for tc in last_message.tool_calls:
-                        if isinstance(tc, dict):
-                            tool_calls_list.append({
-                                "id": tc.get("id"),
-                                "name": tc.get("name"),
-                                "arguments": tc.get("args", tc.get("arguments", {}))
-                            })
-                        else:
-                            tool_calls_list.append({
-                                "id": tc.id,
-                                "name": tc.name,
-                                "arguments": tc.args
-                            })
-                    yield {
-                        "type": "tool_call",
-                        "content": last_message.content or "",
-                        "tool_calls": tool_calls_list
-                    }
-                else:
-                    yield {
-                        "type": "assistant",
-                        "content": last_message.content or ""
-                    }
-            elif isinstance(last_message, ToolMessage):
+        # 调用 LLM（非流式，等待完整响应）
+        response = self.llm.invoke(messages)
+        reasoning_content = getattr(response, "reasoning_content", None) or \
+            (response.additional_kwargs.get("reasoning_content") if hasattr(response, "additional_kwargs") else None) or ""
+
+        if reasoning_content:
+            yield {"type": "reasoning", "content": reasoning_content}
+
+        final_content = response.content or ""
+        # 如果 LLM 没有产生 tool_calls，进入 done
+        has_tool_calls = (hasattr(response, "tool_calls") and response.tool_calls) if response else False
+        if not has_tool_calls:
+            if final_content:
+                yield {"type": "assistant", "content": final_content}
+            yield {"type": "done", "skills_used": []}
+            return
+
+        # 输出 tool_call 事件（让前端能记录到 session）
+        for tc in response.tool_calls:
+            if isinstance(tc, dict):
+                # 转换为 session 格式（使用 arguments 而不是 args）
+                tc_dict = {
+                    "id": tc.get("id"),
+                    "name": tc.get("name"),
+                    "arguments": tc.get("args", tc.get("arguments", {}))
+                }
+                yield {"type": "tool_call", "tool_calls": [tc_dict]}
+            else:
+                yield {"type": "tool_call", "tool_calls": [tc]}
+
+        # ========== 第二步：直接执行工具，不经过 graph ==========
+        # 直接调用 tool_node 执行工具，避免 model_node 的重复调用问题
+        tool_call_entries = []
+        for tc in (response.tool_calls if hasattr(response, 'tool_calls') and response.tool_calls else []):
+            tc_id = tc.get("id")
+            if tc_id:
+                tool_call_entries.append({
+                    "id": tc_id,
+                    "name": tc.get("name"),
+                    "args": tc.get("args", tc.get("arguments", {}))
+                })
+
+        if not tool_call_entries:
+            if final_content:
+                yield {"type": "assistant", "content": final_content}
+            yield {"type": "done", "skills_used": []}
+            return
+
+        # 构建 tool_state 传给 tool_node
+        tool_state: AgentState = {
+            "messages": [AIMessage(content="", tool_calls=tool_call_entries)],
+            "current_task": task,
+            "context": context or {},
+            "skills_used": [],
+            "received_events": []
+        }
+
+        # 直接调用 tool_node 执行工具
+        tool_result_state = NodeFactory.create_tool_node(self.tools)(tool_state)
+
+        # 输出 tool_results
+        for msg in tool_result_state.get("messages", []):
+            if isinstance(msg, ToolMessage):
                 yield {
                     "type": "tool_result",
-                    "tool_call_id": last_message.tool_call_id,
-                    "content": last_message.content
+                    "tool_call_id": msg.tool_call_id,
+                    "content": msg.content
                 }
-            elif isinstance(last_message, HumanMessage):
-                pass
 
-        # 完成事件
-        if last_event:
-            yield {
-                "type": "done",
-                "skills_used": last_event.get("skills_used", [])
-            }
-        else:
-            yield {
-                "type": "done",
-                "skills_used": []
-            }
+        # ========== 第三步：输出最终的 assistant content ==========
+        if final_content:
+            yield {"type": "assistant", "content": final_content}
+
+        yield {"type": "done", "skills_used": []}
 
     def _messages_to_dict(self, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
         """
@@ -953,11 +1110,24 @@ class BaseAgent(ABC):
 
     def get_a2a_app(self):
         """
-        获取 A2A FastAPI 应用
+        获取基础 FastAPI 应用（仅包含 AgentCard 和 Health 端点）
 
-        用于挂载到主应用
+        完整路由由 main.py 在创建 A2AEventHandler 后挂载
 
         Returns:
             FastAPI 应用实例
         """
-        return self.event_server.get_app()
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse
+
+        app = FastAPI(title=f"{self.agent_name} A2A Server")
+
+        @app.get("/.well-known/agent-card.json")
+        async def get_agent_card():
+            return JSONResponse(content=self.agent_card.model_dump())
+
+        @app.get("/health")
+        async def health_check():
+            return {"status": "healthy", "agent_id": self.agent_id}
+
+        return app
