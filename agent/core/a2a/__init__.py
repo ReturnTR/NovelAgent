@@ -40,6 +40,7 @@ from .client_tools import (
     create_a2a_tools
 )
 from .event_server import A2AEventServer
+from .event_handler import A2AEventHandler
 
 __all__ = [
     # 数据模型
@@ -57,5 +58,7 @@ __all__ = [
     "get_a2a_client",
     "create_a2a_tools",
     # 服务端
-    "A2AEventServer"
+    "A2AEventServer",
+    # 事件处理器
+    "A2AEventHandler"
 ]
