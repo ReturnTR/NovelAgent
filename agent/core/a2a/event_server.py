@@ -13,7 +13,8 @@ A2A 事件服务器模块
 - /event 端点返回 StreamingResponse 实现流式响应
 """
 
-from typing import Optional, TYPE_CHECKING
+import json
+from typing import Optional, AsyncIterator, Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .event_handler import A2AEventHandler
@@ -21,6 +22,17 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from .types import A2AEvent, EventType, AgentCard
 from .registry_server import get_registry
+
+
+async def _format_sse(async_iter: AsyncIterator[Dict[str, Any]]) -> AsyncIterator[str]:
+    """
+    将结构化事件 dict 转换为 SSE 格式字符串
+
+    Yields:
+        SSE 格式字符串: "data: {...}\n\n"
+    """
+    async for event in async_iter:
+        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 class A2AEventServer:
@@ -99,13 +111,13 @@ class A2AEventServer:
                     task = event.content.get("task", "")
                     session_id = event.content.get("session_id", "default")
                     return StreamingResponse(
-                        self.event_handler.handle_user_message(task, session_id),
+                        _format_sse(self.event_handler.handle_user_message(task, session_id)),
                         media_type="text/event-stream"
                     )
                 else:
                     # A2A 事件 -> handle_event
                     return StreamingResponse(
-                        self.event_handler.handle_event(event),
+                        _format_sse(self.event_handler.handle_event(event)),
                         media_type="text/event-stream"
                     )
 
