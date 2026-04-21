@@ -148,15 +148,18 @@ class AgentProcessManager:
             agent_id = f"{agent_type}-{int(time.time() * 1000)}"
 
         try:
+            agent_dir = str(main_path.parent)
             env = os.environ.copy()
             env["AGENT_PORT"] = str(port)
             env["AGENT_TYPE"] = agent_type
             env["AGENT_SESSION_ID"] = session_id
             env["AGENT_NAME"] = agent_name
             env["AGENT_ID"] = agent_id
+            env["AGENT_DIR"] = agent_dir
+            env["PROJECT_ROOT"] = str(self.base_dir)
 
             # 使用conda的agent环境启动Agent
-            conda_activate = "source ~/miniconda3/bin/activate agent && "
+            conda_activate = "source /opt/anaconda3/bin/activate agent && "
             proc = subprocess.Popen(
                 ["bash", "-c", conda_activate + f"cd {str(self.base_dir)} && python {str(main_path)}"],
                 env=env,
@@ -199,17 +202,22 @@ class AgentProcessManager:
                     pid = session.get("pid")
                     session_id = session.get("session_id") or session.get("id")
                     if pid:
+                        is_running = False
                         try:
                             proc = psutil.Process(pid)
-                            if not proc.is_running() and session.get("status") == "active":
-                                session["status"] = "suspended"
-                                session["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-                                self.logger.info(f"Session {session_id} marked as suspended (process not running)")
+                            is_running = proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
                         except psutil.NoSuchProcess:
-                            if session.get("status") == "active":
-                                session["status"] = "suspended"
-                                session["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-                                self.logger.info(f"Session {session_id} marked as suspended (NoSuchProcess)")
+                            is_running = False
+
+                        if not is_running and session.get("status") == "active":
+                            port = session.get("port")
+                            session["status"] = "suspended"
+                            session["pid"] = None
+                            session["port"] = None
+                            session["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                            if port:
+                                self.release_port(port)
+                            self.logger.info(f"Session {session_id} marked as suspended (process died)")
                 self.session_manager._save_index(index_data)
             except Exception as e:
                 self.logger.error(f"Error checking agent status: {e}")
@@ -322,9 +330,6 @@ class AgentService:
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        if session.get("status") != "suspended":
-            return {"status": "ok", "message": f"Agent {session_id} is not suspended"}
-
         pid = session.get("pid")
         if pid and self.process_manager.is_process_running(pid):
             return {"status": "ok", "message": f"Agent {session_id} is already running"}
@@ -376,95 +381,27 @@ class AgentService:
         return {"status": "ok", "message": f"Agent {session_id} deleted"}
 
     async def chat_stream(self, session_id: str, message: str):
-        """流式聊天"""
-        self.logger.info(f"Chat stream: session_id={session_id}, message={message[:50]}...")
+        """流式聊天 - 纯代理到 Agent"""
         session = self.session_manager.get_session_by_id(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
         port = session.get("port")
         if not port:
-            raise ValueError("Agent is not running, please resume it first")
-
-        self.session_manager.append_message(session_id, "user", message)
-
-        session_messages = self.session_manager.get_session_messages(session_id)
-        self.logger.debug(f"Session messages count: {len(session_messages)}")
+            raise ValueError("Agent is not running")
 
         async def generate():
             try:
-                self.logger.debug(f"Sending request to agent at port {port}")
                 async with aiohttp.ClientSession() as http_session:
                     async with http_session.post(
                         f"http://localhost:{port}/chat/stream",
-                        json={
-                            "task": message,
-                            "context": session_messages
-                        },
+                        json={"task": message, "session_id": session_id},
                         timeout=aiohttp.ClientTimeout(total=120)
                     ) as response:
-                        self.logger.debug(f"Agent response status: {response.status}")
-                        if response.status == 200:
-                            async for line in response.content:
-                                line = line.decode('utf-8').strip()
-                                if not line.startswith('data:'):
-                                    continue
-
-                                try:
-                                    data = json.loads(line[5:].strip())
-                                    event_type = data.get('type')
-                                    self.logger.debug(f"Event type: {event_type}")
-
-                                    if event_type in ('assistant', 'content'):
-                                        content = data.get('content', '')
-                                        self.session_manager.append_message(session_id, "assistant", content)
-                                        yield f"data: {json.dumps({'type': 'content', 'content': content}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'tool_call':
-                                        tool_calls = data.get('tool_calls', [])
-                                        content = data.get('content', '')
-                                        self.session_manager.append_message(session_id, "assistant", content, tool_calls=tool_calls)
-                                        self.logger.debug(f"Tool call: {tool_calls}")
-                                        yield f"data: {json.dumps({'type': 'tool_call', 'tool_calls': tool_calls}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'tool_result':
-                                        tool_call_id = data.get('tool_call_id')
-                                        content = data.get('content', '')
-                                        self.session_manager.append_message(session_id, "tool", content, tool_call_id=tool_call_id)
-                                        self.logger.debug(f"Tool result: tool_call_id={tool_call_id}")
-                                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_call_id': tool_call_id, 'content': content}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'done':
-                                        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'error':
-                                        error = data.get('error')
-                                        self.logger.error(f"Agent error: {error}")
-                                        yield f"data: {json.dumps({'type': 'error', 'error': error}, ensure_ascii=False)}\n\n"
-
-                                    else:
-                                        self.logger.warning(f'Unknown event type: {event_type}, data: {data}')
-
-                                    self.logger.debug(f"Agent response session content: {content}")
-                                except json.JSONDecodeError:
-                                    continue
-                        else:
-                            error_msg = f"Agent 响应错误: {response.status}"
-                            self.logger.error(error_msg)
-                            yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
-
-            except aiohttp.ClientError as e:
-                import traceback
-                tb = traceback.format_exc()
-                error_msg = f'连接Agent失败: {str(e)}'
-                self.logger.error(f"{error_msg}\n{tb}")
-                yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
+                        async for line in response.content:
+                            yield line
             except Exception as e:
-                import traceback
-                tb = traceback.format_exc()
-                error_msg = f'处理失败: {str(e)}'
-                self.logger.error(f"{error_msg}\n{tb}")
-                yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n".encode()
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -721,83 +658,26 @@ def create_app(debug: bool = False) -> tuple[FastAPI, AgentService, logging.Logg
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         return session
 
-    @app.post("/api/sessions/{session_id}/agent-message")
-    async def append_agent_message(session_id: str, request: Request):
-        """
-        Agent间通信消息记录接口
-
-        让Agent可以通过HTTP调用将接收到的Agent间通信消息记录到Session中
-
-        请求体：
-        {
-            "role": "user" or "assistant",
-            "content": "消息内容",
-            "source_agent_id": "发送者Agent ID",
-            "target_agent_id": "接收者Agent ID",
-            "event_id": "事件ID（可选）",
-            "task_id": "任务ID（可选）"
-        }
-        """
-        try:
-            data = await request.json()
-            role = data.get("role", "user")
-            content = data.get("content", "")
-            source_agent_id = data.get("source_agent_id", "")
-            target_agent_id = data.get("target_agent_id", "")
-            event_id = data.get("event_id")
-            task_id = data.get("task_id")
-
-            agent_service.session_manager.append_agent_message(
-                session_id,
-                role,
-                content,
-                source_agent_id,
-                target_agent_id,
-                event_id,
-                task_id
-            )
-
-            return {"status": "ok", "message": "Agent message appended"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
     @app.get("/api/sessions/{session_id}/messages")
     async def get_session_messages(session_id: str):
-        messages = agent_service.session_manager.get_session_messages(session_id)
-        return {"messages": messages}
-    
-    @app.delete("/api/sessions/{session_id}/messages/{message_index}")
-    async def delete_session_message(session_id: str, message_index: int):
-        """删除会话中的特定消息
-        message_index 是 messages 列表中的索引（从 0 开始）
-        """
-        try:
-            agent_service.session_manager.delete_message_by_index(session_id, message_index)
-            return {"status": "ok", "message": "Message deleted successfully"}
-        except FileNotFoundError:
+        """获取 Session 消息 - 纯代理到 Agent"""
+        session = agent_service.session_manager.get_session_by_id(session_id)
+        if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-        except IndexError:
-            raise HTTPException(status_code=400, detail="Invalid message index")
+
+        port = session.get("port")
+        if not port:
+            return {"messages": []}
+
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(
+                    f"http://localhost:{port}/session/{session_id}/history"
+                ) as resp:
+                    return await resp.json()
         except Exception as e:
-            logger.error(f"Error deleting message: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to delete message: {e}")
-
-    @app.post("/api/sessions/{session_id}/messages")
-    async def append_message(session_id: str, message: MessageModel):
-        role = message.role
-        content = message.content or ""
-        tool_calls = message.tool_calls
-        tool_results = message.tool_results
-
-        if not role:
-            raise HTTPException(status_code=400, detail="Missing role")
-
-        if not content and not tool_calls and not tool_results:
-            raise HTTPException(status_code=400, detail="Missing content, tool_calls, or tool_results")
-
-        agent_service.session_manager.append_message(session_id, role, content, tool_calls, tool_results)
-        return {"status": "ok", "received": {"tool_calls": tool_calls, "tool_results": tool_results}}
-
+            raise HTTPException(status_code=500, detail=f"Failed to get session messages: {e}")
+    
     @app.delete("/api/sessions/{session_id}")
     async def delete_session(session_id: str):
         try:
