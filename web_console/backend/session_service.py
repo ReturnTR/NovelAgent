@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from config import PROJECT_ROOT, SESSION_DIR
+from web_console.backend.config import PROJECT_ROOT, SESSION_DIR
 
 # Ensure core module is importable
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -60,9 +60,18 @@ class SessionService:
     def append_message(self, session_id: str, role: str, content: str,
                        tool_calls: Optional[List] = None,
                        tool_results: Optional[List] = None,
-                       reasoning_content: Optional[str] = None):
+                       reasoning_content: Optional[str] = None,
+                       tool_call_id: Optional[str] = None):
         """Append message to session"""
-        self._manager.append_message(session_id, role, content, tool_calls, tool_results, reasoning_content)
+        self._manager.append_message(session_id, role, content, tool_calls, tool_results, tool_call_id, reasoning_content)
+
+    def _load_index(self) -> Dict[str, Any]:
+        """Load index (delegated for process_manager)"""
+        return self._manager._load_index()
+
+    def _save_index(self, index_data: Dict[str, Any]):
+        """Save index (delegated for process_manager)"""
+        self._manager._save_index(index_data)
 
     def append_agent_message(self, session_id: str, role: str, content: str,
                             source_agent_id: str = "", target_agent_id: str = "",
@@ -85,7 +94,4 @@ class SessionService:
 
     def get_agent_id(self, session_id: str) -> Optional[str]:
         """Get agent ID for session"""
-        session = self._manager.get_session(session_id)
-        if session:
-            return session.get("agent_id")
-        return None
+        return self._manager.get_agent_id(session_id)
