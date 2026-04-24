@@ -74,3 +74,13 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
+
+# Worktrees
+.worktrees/
+
+# docs
+docs/
+
+# Frontend
+node_modules/
+web_console/frontend/dist/
