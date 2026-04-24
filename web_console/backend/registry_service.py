@@ -32,51 +32,8 @@ class RegistryService:
     async def search_agents(self, keywords: Optional[str] = None,
                            agent_type: Optional[str] = None) -> List[AgentCard]:
         """Search agents via registry with filtering"""
-        # Get active sessions
-        active_sessions = []
-        for session in self.session_service.list_sessions():
-            if session.get("status") == "active" and session.get("port"):
-                active_sessions.append(session)
-
-        # Fetch AgentCards from each active Agent
-        agents = []
-        for session in active_sessions:
-            port = session.get("port")
-            try:
-                async with aiohttp.ClientSession() as http_session:
-                    async with http_session.get(
-                        f"http://localhost:{port}/a2a/.well-known/agent-card.json",
-                        timeout=aiohttp.ClientTimeout(total=2)
-                    ) as response:
-                        if response.status == 200:
-                            agent_card_data = await response.json()
-                            agent_card = AgentCard(**agent_card_data)
-                            agents.append(agent_card)
-            except Exception as e:
-                self.logger.debug(f"Failed to get agent card from port {port}: {e}")
-
-        # Apply filters
-        filtered_agents = []
-        for agent in agents:
-            if agent_type and agent.agent_type != agent_type:
-                continue
-            if keywords:
-                keywords_lower = keywords.lower()
-                match = False
-                if keywords_lower in agent.agent_name.lower():
-                    match = True
-                elif keywords_lower in agent.description.lower():
-                    match = True
-                else:
-                    for cap in agent.capabilities:
-                        if keywords_lower in cap.name.lower() or keywords_lower in cap.description.lower():
-                            match = True
-                            break
-                if not match:
-                    continue
-            filtered_agents.append(agent)
-
-        return filtered_agents
+        registry = get_registry()
+        return await registry.search_agents(keywords, agent_type)
 
     async def register_agent(self, agent_card: AgentCard) -> Dict[str, Any]:
         """Register agent to registry"""
