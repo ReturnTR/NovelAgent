@@ -20,10 +20,10 @@ graph TB
         RS[RegistryServer]
     end
 
-    subgraph Agents[Agent 节点 - 每个是独立进程]
-        SA1[SupervisorAgent<br/>port 8001<br/><br/>A2AEventServer<br/>SessionManager<br/>BaseAgent]
-        SA2[CharacterAgent<br/>port 8002<br/><br/>A2AEventServer<br/>SessionManager<br/>BaseAgent]
-        SA3[TestAgent<br/>...<br/><br/>A2AEventServer<br/>SessionManager<br/>BaseAgent]
+    subgraph Agents[Agent 节点]
+        SA1[SupervisorAgent<br/>port 8001]
+        SA2[CharacterAgent<br/>port 8002]
+        SA3[TestAgent<br/>...]
     end
 
     FE --> WC
@@ -33,98 +33,9 @@ graph TB
     WC --- PM
     WC --- RS
 
-    SA1 <--> SA2
-    SA2 <--> SA3
-    SA1 -.-> SA3
-```
-
----
-
-## 服务节点设计
-
-### 1. Agent 节点（`core/a2a/routes.py`）
-
-每个 Agent 独立进程，监听自己的端口，通过 A2A 协议通信：
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              Agent 节点 (e.g. SupervisorAgent)           │
-│                                                          │
-│  FastAPI App (独立端口, 如 8001)                        │
-│                                                          │
-│  GET  /.well-known/agent-card.json  → Agent 元信息       │
-│  GET  /session/list               → 列出所有会话         │
-│  GET  /session/{id}/history        → 会话历史消息         │
-│  POST /session/new                → 新建会话             │
-│  DELETE /session/{id}/delete      → 删除会话             │
-│  PUT  /session/{id}/rename        → 重命名会话           │
-│  POST /session/{id}/activate      → 激活会话            │
-│  POST /chat/stream                → 流式对话 (SSE)       │
-│  POST /a2a/event                 → A2A 事件处理 (SSE)   │
-│  GET  /health                     → 健康检查              │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Session 状态机：**
-
-```
-创建 → active (同时只能有1个)  ──新建──→ 被挂起 → suspended
-删除 → 激活最近更新的会话
-```
-
-**会话存储（JSONL）：**
-
-```jsonl
-{"type": "message", "role": "user", "content": "...", "timestamp": "..."}
-{"type": "message", "role": "assistant", "content": "...", "tool_calls": [...], "timestamp": "..."}
-{"type": "message", "role": "tool", "content": "...", "tool_call_id": "...", "timestamp": "..."}
-{"type": "agent_request", "role": "user", "task": "...", "source_agent_id": "...", "event_id": "..."}
-{"type": "agent_response", "role": "assistant", "content": "...", "target_agent_id": "...", "event_id": "..."}
-```
-
----
-
-### 2. Web Console 节点（`web_console/`）
-
-统一网关，对前端暴露 REST API，对 Agent 节点代理转发：
-
-```
-┌─────────────────────────────────────────────────────────┐
-│           Web Console Backend (port 8000)                │
-│                                                          │
-│  FastAPI Server                                          │
-│                                                          │
-│  Agent Routes (/api/agents)                              │
-│  ├── GET  /api/agents                    → 列出所有 Agent │
-│  ├── POST /api/agents                    → 创建/启动 Agent │
-│  ├── POST /api/agents/{id}/suspend       → 挂起 Agent     │
-│  ├── POST /api/agents/{id}/resume        → 恢复 Agent     │
-│  └── DELETE /api/agents/{id}             → 删除 Agent     │
-│                                                          │
-│  Session Routes (/api/sessions)                          │
-│  ├── GET  /api/sessions                   → 列出所有会话   │
-│  ├── GET  /api/sessions/{id}              → 获取会话信息    │
-│  ├── GET  /api/sessions/{id}/messages     → 获取消息历史  │
-│  ├── POST /api/sessions/new               → 新建会话       │
-│  ├── DELETE /api/sessions/{id}            → 删除会话       │
-│  ├── PUT  /api/sessions/{id}/rename       → 重命名会话    │
-│  └── POST /api/sessions/{id}/activate     → 激活会话      │
-│                                                          │
-│  Chat Routes                                             │
-│  └── POST /chat/stream                   → 流式对话 (SSE) │
-│                                                          │
-│  Registry Routes (/api/registry)                           │
-│  ├── POST /api/registry/register     → Agent 注册         │
-│  └── GET  /api/registry/agents       → 查询已注册 Agents  │
-└─────────────────────────────────────────────────────────┘
-```
-
-**AgentService** 内部逻辑：
-
-```
-list_agents()  → 遍历 FIXED_AGENTS → 检查 /health → 返回状态
-create_agent() → AgentProcessManager.start_agent() → 启动子进程
-chat_stream()  → 代理到 Agent 节点 /chat/stream
+    SA1 <-.-> SA2
+    SA1 <-.-> SA3
+    SA2 <-.-> SA3
 ```
 
 ---
@@ -228,6 +139,96 @@ python -m core.a2a.run_agent \
     --agent-dir ./supervisor_agent \
     --port 8001 \
     --registry-endpoint http://localhost:8000
+```
+
+
+---
+
+## 服务节点设计
+
+### 1. Agent 节点（`core/a2a/routes.py`）
+
+每个 Agent 独立进程，监听自己的端口，通过 A2A 协议通信：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│              Agent 节点 (e.g. SupervisorAgent)           │
+│                                                          │
+│  FastAPI App (独立端口, 如 8001)                        │
+│                                                          │
+│  GET  /.well-known/agent-card.json  → Agent 元信息       │
+│  GET  /session/list               → 列出所有会话         │
+│  GET  /session/{id}/history        → 会话历史消息         │
+│  POST /session/new                → 新建会话             │
+│  DELETE /session/{id}/delete      → 删除会话             │
+│  PUT  /session/{id}/rename        → 重命名会话           │
+│  POST /session/{id}/activate      → 激活会话            │
+│  POST /chat/stream                → 流式对话 (SSE)       │
+│  POST /a2a/event                 → A2A 事件处理 (SSE)   │
+│  GET  /health                     → 健康检查              │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Session 状态机：**
+
+```
+创建 → active (同时只能有1个)  ──新建──→ 被挂起 → suspended
+删除 → 激活最近更新的会话
+```
+
+**会话存储（JSONL）：**
+
+```jsonl
+{"type": "message", "role": "user", "content": "...", "timestamp": "..."}
+{"type": "message", "role": "assistant", "content": "...", "tool_calls": [...], "timestamp": "..."}
+{"type": "message", "role": "tool", "content": "...", "tool_call_id": "...", "timestamp": "..."}
+{"type": "agent_request", "role": "user", "task": "...", "source_agent_id": "...", "event_id": "..."}
+{"type": "agent_response", "role": "assistant", "content": "...", "target_agent_id": "...", "event_id": "..."}
+```
+
+---
+
+### 2. Web Console 节点（`web_console/`）
+
+统一网关，对前端暴露 REST API，对 Agent 节点代理转发：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│           Web Console Backend (port 8000)                │
+│                                                          │
+│  FastAPI Server                                          │
+│                                                          │
+│  Agent Routes (/api/agents)                              │
+│  ├── GET  /api/agents                    → 列出所有 Agent │
+│  ├── POST /api/agents                    → 创建/启动 Agent │
+│  ├── POST /api/agents/{id}/suspend       → 挂起 Agent     │
+│  ├── POST /api/agents/{id}/resume        → 恢复 Agent     │
+│  └── DELETE /api/agents/{id}             → 删除 Agent     │
+│                                                          │
+│  Session Routes (/api/sessions)                          │
+│  ├── GET  /api/sessions                   → 列出所有会话   │
+│  ├── GET  /api/sessions/{id}              → 获取会话信息    │
+│  ├── GET  /api/sessions/{id}/messages     → 获取消息历史  │
+│  ├── POST /api/sessions/new               → 新建会话       │
+│  ├── DELETE /api/sessions/{id}            → 删除会话       │
+│  ├── PUT  /api/sessions/{id}/rename       → 重命名会话    │
+│  └── POST /api/sessions/{id}/activate     → 激活会话      │
+│                                                          │
+│  Chat Routes                                             │
+│  └── POST /chat/stream                   → 流式对话 (SSE) │
+│                                                          │
+│  Registry Routes (/api/registry)                           │
+│  ├── POST /api/registry/register     → Agent 注册         │
+│  └── GET  /api/registry/agents       → 查询已注册 Agents  │
+└─────────────────────────────────────────────────────────┘
+```
+
+**AgentService** 内部逻辑：
+
+```
+list_agents()  → 遍历 FIXED_AGENTS → 检查 /health → 返回状态
+create_agent() → AgentProcessManager.start_agent() → 启动子进程
+chat_stream()  → 代理到 Agent 节点 /chat/stream
 ```
 
 ---
