@@ -82,13 +82,13 @@ export function Sidebar({ currentSessionId, onSelectAgent, onShowNotification }:
     }
   };
 
-  const handleDeleteAgent = async (sessionId: string, agentName: string) => {
+  const handleDeleteAgent = async (agentId: string, agentName: string) => {
     if (!confirm(`确定要删除 ${agentName} 吗？此操作不可恢复！`)) return;
 
-    const success = await deleteAgent(sessionId);
+    const success = await deleteAgent(agentId);
     if (success) {
       onShowNotification(`${agentName} 已删除`, 'info');
-      if (currentSessionId === sessionId) {
+      if (currentSessionId === agentId) {
         onSelectAgent('');
       }
     } else {
@@ -96,8 +96,8 @@ export function Sidebar({ currentSessionId, onSelectAgent, onShowNotification }:
     }
   };
 
-  const handleSuspendAgent = async (sessionId: string, agentName: string) => {
-    const success = await suspendAgent(sessionId);
+  const handleSuspendAgent = async (agentId: string, agentName: string) => {
+    const success = await suspendAgent(agentId);
     if (success) {
       onShowNotification(`${agentName} 已挂起`, 'info');
     } else {
@@ -105,8 +105,8 @@ export function Sidebar({ currentSessionId, onSelectAgent, onShowNotification }:
     }
   };
 
-  const handleResumeAgent = async (sessionId: string, agentName: string) => {
-    const success = await resumeAgent(sessionId);
+  const handleResumeAgent = async (agentId: string, agentName: string) => {
+    const success = await resumeAgent(agentId);
     if (success) {
       onShowNotification(`${agentName} 已恢复`, 'success');
     } else {
@@ -143,12 +143,20 @@ export function Sidebar({ currentSessionId, onSelectAgent, onShowNotification }:
             </svg>
             Agents
           </h2>
-          <button onClick={() => fetchAgents()} title="刷新">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M23 4v6h-6M1 20v-6h6"/>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-            </svg>
-          </button>
+          <div className="sidebar-header-actions">
+            <button onClick={() => setShowCreateModal(true)} title="新建 Agent">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+            <button onClick={() => fetchAgents()} title="刷新">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M23 4v6h-6M1 20v-6h6"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         <AgentList
@@ -161,16 +169,6 @@ export function Sidebar({ currentSessionId, onSelectAgent, onShowNotification }:
           onResumeAgent={handleResumeAgent}
           onDeleteAgent={handleDeleteAgent}
         />
-
-        <div className="sidebar-footer">
-          <button className="new-agent-btn" onClick={() => setShowCreateModal(true)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            新建Agent
-          </button>
-        </div>
       </div>
 
       <div className="resize-handle" ref={resizeRef} onMouseDown={handleMouseDown} />

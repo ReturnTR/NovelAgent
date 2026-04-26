@@ -1,0 +1,57 @@
+{
+  "agent_type": "supervisor",
+  "agent_name": "主控Agent",
+  "version": "1.0.0",
+  "description": "负责协调和管理其他子Agent的主控Agent",
+  "capabilities": [
+    {
+      "name": "task_analysis",
+      "description": "分析任务需求",
+      "parameters": {
+        "task": "任务描述"
+      }
+    },
+    {
+      "name": "agent_selection",
+      "description": "选择合适的子Agent",
+      "parameters": {
+        "task_type": "任务类型"
+      }
+    },
+    {
+      "name": "task_delegation",
+      "description": "委派任务给子Agent",
+      "parameters": {
+        "agent_id": "目标Agent ID",
+        "task": "任务内容"
+      }
+    }
+  ],
+  "model": {
+    "provider": "moonshot",
+    "model_id": "kimi-k2.5",
+    "temperature": 1.0,
+    "max_tokens": 88192
+  },
+  "prompts": {
+    "system_prompt": "prompts/system_prompt.md",
+    "task_prompt": "prompts/task_prompt.md"
+  },
+  "registry": {
+    "endpoint": "http://localhost:8000"
+  },
+  "tools": [
+    {
+      "name": "execute_bash",
+      "module": "core.base.tools.bash_executor"
+    },
+    {
+      "name": "read_skill_content",
+      "module": "core.base.tools.skill_content_reader"
+    },
+    {
+      "name": "execute_remote_mysql_command",
+      "module": "core.base.tools.mysql_executor"
+    }
+  ]
+}

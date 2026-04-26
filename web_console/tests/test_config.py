@@ -3,10 +3,7 @@ import pytest
 from web_console.backend.config import (
     BASE_DIR,
     PROJECT_ROOT,
-    AGENT_MAIN_FILES,
-    PORT_BASE,
-    MAX_PORT,
-    SESSION_DIR,
+    FIXED_AGENTS,
     CORE_ROOT,
     AGENTS_ROOT,
     ensure_python_path,
@@ -25,27 +22,19 @@ class TestConfig:
         """PROJECT_ROOT should equal BASE_DIR"""
         assert PROJECT_ROOT == BASE_DIR
 
-    def test_agent_main_files_contains_supervisor(self):
-        """AGENT_MAIN_FILES should contain supervisor entry"""
-        assert "supervisor" in AGENT_MAIN_FILES
-        assert AGENT_MAIN_FILES["supervisor"] == "agents/supervisor_agent/main.py"
+    def test_fixed_agents_is_list(self):
+        """FIXED_AGENTS should be a list"""
+        assert isinstance(FIXED_AGENTS, list)
 
-    def test_agent_main_files_contains_character(self):
-        """AGENT_MAIN_FILES should contain character entry"""
-        assert "character" in AGENT_MAIN_FILES
-        assert AGENT_MAIN_FILES["character"] == "agents/character_agent/main.py"
+    def test_fixed_agents_has_supervisor(self):
+        """FIXED_AGENTS should have supervisor entry"""
+        agent_ids = [a["agent_id"] for a in FIXED_AGENTS]
+        assert "supervisor-001" in agent_ids
 
-    def test_port_base_is_8001(self):
-        """PORT_BASE should be 8001"""
-        assert PORT_BASE == 8001
-
-    def test_max_port_is_9000(self):
-        """MAX_PORT should be 9000"""
-        assert MAX_PORT == 9000
-
-    def test_session_dir_path(self):
-        """SESSION_DIR should point to web_console/backend/sessions"""
-        assert SESSION_DIR == BASE_DIR / "web_console" / "backend" / "sessions"
+    def test_fixed_agents_has_character(self):
+        """FIXED_AGENTS should have character entry"""
+        agent_ids = [a["agent_id"] for a in FIXED_AGENTS]
+        assert "character-001" in agent_ids
 
     def test_core_root_path(self):
         """CORE_ROOT should point to core directory"""

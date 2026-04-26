@@ -11,10 +11,11 @@ export function Header({ title, isStreaming }: HeaderProps) {
   return (
     <div className="header">
       <h1 id="currentAgentTitle">{title}</h1>
-      <div className={`status ${isStreaming ? 'streaming' : ''}`}>
-        {isStreaming ? '● 处理中...' : '● 就绪'}
-      </div>
-      <button className="theme-toggle" onClick={toggleTheme} title="切换主题">
+      <div className="header-right">
+        <div className={`status ${isStreaming ? 'streaming' : ''}`}>
+          {isStreaming ? '处理中...' : '就绪'}
+        </div>
+        <button className="theme-toggle" onClick={toggleTheme} title="切换主题">
         {theme === 'dark' ? (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
@@ -33,6 +34,7 @@ export function Header({ title, isStreaming }: HeaderProps) {
           </svg>
         )}
       </button>
+      </div>
     </div>
   );
 }

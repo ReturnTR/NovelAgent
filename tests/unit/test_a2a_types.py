@@ -2,7 +2,7 @@
 Unit tests for A2A data types.
 Tests: AgentCard, A2AEvent, EventType, SendMessageMode Pydantic models.
 """
-from agent.core.a2a.types import (
+from core.a2a.types import (
     AgentCard,
     AgentCapability,
     A2AEvent,
@@ -69,7 +69,7 @@ def test_a2a_event_optional_target_is_none_by_default():
     """target is Optional[str] and defaults to None (broadcast)."""
     event = A2AEvent(
         event_id="evt-001",
-        event_type=EventType.HEARTBEAT,
+        event_type=EventType.TASK_REQUEST,
         source="agent-001",
     )
     assert event.target is None
@@ -77,17 +77,11 @@ def test_a2a_event_optional_target_is_none_by_default():
 
 
 def test_all_event_types_exist():
-    """All event types including USER_MESSAGE are present in the enum."""
+    """All event types are present in the enum."""
     expected = [
         "task_request",
         "task_response",
-        "task_progress",
-        "agent_discovery",
-        "agent_register",
-        "agent_unregister",
-        "heartbeat",
-        "error",
-        "user_message",  # NEW: Web Console message type
+        "user_message",
     ]
     actual = [e.value for e in EventType]
     for e in expected:

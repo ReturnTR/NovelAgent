@@ -7,9 +7,9 @@ interface AgentItemProps {
   isActive: boolean;
   onSelect: (sessionId: string) => void;
   onUpdateName: (sessionId: string, name: string) => Promise<boolean>;
-  onSuspend: (sessionId: string, name: string) => void;
-  onResume: (sessionId: string, name: string) => void;
-  onDelete: (sessionId: string, name: string) => void;
+  onSuspend: (agentId: string, name: string) => void;
+  onResume: (agentId: string, name: string) => void;
+  onDelete: (agentId: string, name: string) => void;
 }
 
 export function AgentItem({
@@ -52,7 +52,7 @@ export function AgentItem({
 
   const handleSaveName = async () => {
     if (editName.trim() && editName !== agent.agent_name) {
-      await onUpdateName(agent.session_id, editName.trim());
+      await onUpdateName(agent.agent_id, editName.trim());
     }
     setIsEditing(false);
   };
@@ -75,7 +75,7 @@ export function AgentItem({
     <div
       className={`agent-item ${isActive ? 'active' : ''}`}
       data-session-id={agent.session_id}
-      onClick={() => onSelect(agent.session_id)}
+      onClick={() => agent.session_id && onSelect(agent.session_id)}
     >
       <span className={`agent-status ${agent.status}`} />
 
@@ -105,15 +105,15 @@ export function AgentItem({
       {showMenu && (
         <div className="agent-dropdown show" ref={menuRef}>
           {agent.status === 'active' ? (
-            <div className="agent-dropdown-item suspend" onClick={() => { onSuspend(agent.session_id, agent.agent_name); setShowMenu(false); }}>
+            <div className="agent-dropdown-item suspend" onClick={() => { onSuspend(agent.agent_id, agent.agent_name); setShowMenu(false); }}>
               挂起
             </div>
           ) : (
-            <div className="agent-dropdown-item resume" onClick={() => { onResume(agent.session_id, agent.agent_name); setShowMenu(false); }}>
+            <div className="agent-dropdown-item resume" onClick={() => { onResume(agent.agent_id, agent.agent_name); setShowMenu(false); }}>
               恢复
             </div>
           )}
-          <div className="agent-dropdown-item delete" onClick={() => { onDelete(agent.session_id, agent.agent_name); setShowMenu(false); }}>
+          <div className="agent-dropdown-item delete" onClick={() => { onDelete(agent.agent_id, agent.agent_name); setShowMenu(false); }}>
             删除
           </div>
         </div>

@@ -1,10 +1,9 @@
 """Registry service - A2A Agent discovery and registration"""
 import sys
-import aiohttp
 import logging
 from typing import List, Dict, Any, Optional
 
-from config import PROJECT_ROOT
+from web_console.backend.config import PROJECT_ROOT
 
 sys.path.insert(0, str(PROJECT_ROOT))
 from core.a2a import get_registry, AgentCard
@@ -15,8 +14,7 @@ logger = logging.getLogger(__name__)
 class RegistryService:
     """Service for A2A Agent registry operations"""
 
-    def __init__(self, session_service, logger: logging.Logger):
-        self.session_service = session_service
+    def __init__(self, logger: logging.Logger):
         self.logger = logger
 
     async def list_agents(self) -> List[AgentCard]:

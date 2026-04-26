@@ -1,167 +1,373 @@
-"""Agent service - manages Agent lifecycle (create/suspend/resume/delete)"""
-import asyncio
+"""Agent service - manages Agent lifecycle with process control"""
 import aiohttp
 import json
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
 
-from config import AGENT_MAIN_FILES
-from process_manager import AgentProcessManager
-from session_service import SessionService
+from web_console.backend.config import FIXED_AGENTS, agent_state
+from web_console.backend.process_manager import AgentProcessManager
 
 logger = logging.getLogger(__name__)
 
 
 class AgentService:
-    """Service for Agent lifecycle management"""
+    """Service for Agent lifecycle management.
+
+    Manages agent processes based on FIXED_AGENTS config.
+    Proxies requests to Agent APIs.
+    """
 
     def __init__(self, process_manager: AgentProcessManager, logger: logging.Logger):
         self.process_manager = process_manager
-        self.session_service = process_manager.session_manager
         self.logger = logger
 
+    def _get_agent_config(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Get agent config by agent_id"""
+        for agent in FIXED_AGENTS:
+            if agent["agent_id"] == agent_id:
+                return agent
+        return None
+
+    async def _check_agent_health(self, port: int) -> str:
+        """Check if agent is healthy via /health endpoint"""
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(
+                    f"http://localhost:{port}/health",
+                    timeout=aiohttp.ClientTimeout(total=2)
+                ) as response:
+                    if response.status == 200:
+                        return "active"
+                    return "inactive"
+        except Exception:
+            return "inactive"
+
+    async def _get_agent_card(self, port: int) -> Optional[Dict[str, Any]]:
+        """Get agent card from agent"""
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(
+                    f"http://localhost:{port}/.well-known/agent-card.json",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    return None
+        except Exception:
+            return None
+
     async def list_agents(self) -> List[Dict[str, Any]]:
-        """List all agents with status"""
-        self.session_service.sync_sessions_status(self.process_manager._get_all_running_pids())
-        sessions = self.session_service.list_sessions()
-
+        """List all configured agents with status and capabilities"""
         agents = []
-        for session in sessions:
-            port = session.get("port")
-            status = "inactive"
 
-            if port:
-                try:
-                    async with aiohttp.ClientSession() as http_session:
-                        async with http_session.get(
-                            f"http://localhost:{port}/a2a/health",
-                            timeout=aiohttp.ClientTimeout(total=2)
-                        ) as response:
-                            if response.status == 200:
-                                status = "active"
-                except Exception:
-                    pass
+        for agent_config in FIXED_AGENTS:
+            agent_id = agent_config["agent_id"]
+            state = agent_state.get_by_id(agent_id)
 
-            session_id = session.get("session_id") or session.get("id")
+            pid = state.get("pid") if state else None
+            status = state.get("status", "inactive") if state else "inactive"
+            port = state.get("port", agent_config.get("port")) if state else agent_config.get("port")
+
+            # Verify actual health status
+            if port and status == "active":
+                actual_status = await self._check_agent_health(port)
+                if actual_status != "active":
+                    status = "inactive"
+                    if pid:
+                        agent_state.set_inactive(agent_id)
+                        pid = None
+
+            capabilities = []
+            if port and status == "active":
+                card = await self._get_agent_card(port)
+                if card and "capabilities" in card:
+                    capabilities = card["capabilities"]
+
+            # Get actual session_id from agent
+            actual_session_id = f"wc-{agent_id}"
+            if port and status == "active":
+                sessions = await self.get_agent_sessions(agent_id)
+                if sessions:
+                    # Use most recent active session or first available
+                    active_sessions = [s for s in sessions if s.get("status") == "active"]
+                    if active_sessions:
+                        actual_session_id = active_sessions[0].get("session_id")
+                    else:
+                        actual_session_id = sessions[0].get("session_id")
+
             agents.append({
-                "agent_type": session.get("agent_type"),
-                "agent_name": session.get("agent_name"),
-                "agent_id": session.get("agent_id"),
+                "agent_type": agent_config["agent_type"],
+                "agent_name": agent_config["agent_name"],
+                "agent_id": agent_id,
                 "port": port,
-                "pid": session.get("pid"),
+                "pid": pid,
                 "status": status,
-                "session_id": session_id,
-                "updated_at": session.get("updated_at"),
-                "message_count": session.get("message_count", 0),
-                "capabilities": []
+                "session_id": actual_session_id,
+                "capabilities": capabilities
             })
 
         return agents
 
-    def create_agent(self, agent_type: str, agent_name: str) -> Dict[str, Any]:
-        """Create new Agent instance"""
-        self.logger.info(f"Creating agent: type={agent_type}, name={agent_name}")
-        if agent_type not in AGENT_MAIN_FILES:
-            raise ValueError(f"Unknown agent type: {agent_type}")
+    async def get_agent_sessions(self, agent_id: str) -> List[Dict[str, Any]]:
+        """Get all sessions for an agent via agent's /session/list API"""
+        state = agent_state.get_by_id(agent_id)
+        if not state or not state.get("port"):
+            return []
 
-        session_id = self.session_service.create_session(agent_type, agent_name)
-        port, pid = self.process_manager.start_agent_process(
-            session_id, agent_type, agent_name, AGENT_MAIN_FILES[agent_type]
+        port = state["port"]
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(
+                    f"http://localhost:{port}/session/list",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get("sessions", [])
+                    return []
+        except Exception as e:
+            self.logger.error(f"Failed to get sessions from agent {agent_id}: {e}")
+            return []
+
+    async def get_session_history(self, agent_id: str, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get session history from agent via /session/{session_id}/history API"""
+        state = agent_state.get_by_id(agent_id)
+        if not state or not state.get("port"):
+            return None
+
+        port = state["port"]
+        try:
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(
+                    f"http://localhost:{port}/session/{session_id}/history",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    return None
+        except Exception as e:
+            self.logger.error(f"Failed to get session history: {e}")
+            return None
+
+    async def create_agent_session(self, agent_id: str) -> Dict[str, Any]:
+        """Create a new session in the agent via /session/new API"""
+        state = agent_state.get_by_id(agent_id)
+        if not state or not state.get("port"):
+            raise ValueError(f"Agent {agent_id} is not running")
+
+        port = state["port"]
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.post(
+                f"http://localhost:{port}/session/new",
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+                raise Exception(f"Failed to create session: {response.status}")
+
+    async def delete_agent_session(self, agent_id: str, session_id: str) -> None:
+        """Delete a session in the agent via /session/{session_id}/delete API"""
+        state = agent_state.get_by_id(agent_id)
+        if not state or not state.get("port"):
+            raise ValueError(f"Agent {agent_id} is not running")
+
+        port = state["port"]
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.delete(
+                f"http://localhost:{port}/session/{session_id}/delete",
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if response.status != 200:
+                    raise Exception(f"Failed to delete session: {response.status}")
+
+    async def rename_agent_session(self, agent_id: str, session_id: str, new_name: str) -> None:
+        """Rename a session in the agent via /session/{session_id}/rename API"""
+        state = agent_state.get_by_id(agent_id)
+        if not state or not state.get("port"):
+            raise ValueError(f"Agent {agent_id} is not running")
+
+        port = state["port"]
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.put(
+                f"http://localhost:{port}/session/{session_id}/rename",
+                json={"session_name": new_name},
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if response.status != 200:
+                    raise Exception(f"Failed to rename session: {response.status}")
+
+    async def activate_agent_session(self, agent_id: str, session_id: str) -> Dict[str, Any]:
+        """Activate a session in the agent via /session/{session_id}/activate API"""
+        state = agent_state.get_by_id(agent_id)
+        if not state or not state.get("port"):
+            raise ValueError(f"Agent {agent_id} is not running")
+
+        port = state["port"]
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.post(
+                f"http://localhost:{port}/session/{session_id}/activate",
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+                raise Exception(f"Failed to activate session: {response.status}")
+
+    async def get_or_create_agent_session(self, agent_id: str) -> Optional[str]:
+        """Get or create a session in the agent, return session_id"""
+        state = agent_state.get_by_id(agent_id)
+        if not state or not state.get("port"):
+            return None
+
+        port = state["port"]
+        agent_session_id = state.get("agent_session_id")
+
+        if agent_session_id:
+            try:
+                async with aiohttp.ClientSession() as http_session:
+                    async with http_session.get(
+                        f"http://localhost:{port}/session/{agent_session_id}/history",
+                        timeout=aiohttp.ClientTimeout(total=5)
+                    ) as response:
+                        if response.status == 200:
+                            return agent_session_id
+            except Exception:
+                pass
+
+        new_session_id = f"wc-{agent_id}"
+        return new_session_id
+
+    # ============================================================================
+    # Agent Lifecycle Operations
+    # ============================================================================
+
+    def create_agent(self, agent_id: str) -> Dict[str, Any]:
+        """Create/start Agent instance"""
+        agent_config = self._get_agent_config(agent_id)
+        if not agent_config:
+            raise ValueError(f"Unknown agent_id: {agent_id}")
+
+        # Check if already running
+        state = agent_state.get_by_id(agent_id)
+        if state and state.get("pid"):
+            if self.process_manager.is_process_running(state["pid"]):
+                return {
+                    "status": "ok",
+                    "message": f"Agent {agent_id} is already running",
+                    "session_id": f"wc-{agent_id}",
+                    "agent_session_id": state.get("agent_session_id"),
+                    "port": state["port"],
+                    "pid": state["pid"]
+                }
+
+        port = agent_config["port"]
+        pid = self.process_manager.start_agent_process(
+            agent_id=agent_id,
+            agent_type=agent_config["agent_type"],
+            agent_name=agent_config["agent_name"],
+            main_file=agent_config["main_file"],
+            port=port
         )
-        self.session_service.update_session_port_pid(session_id, port, pid)
+
+        agent_state.set_active(agent_id, pid, port)
 
         return {
             "status": "ok",
-            "message": f"Agent {agent_name} created",
-            "session_id": session_id,
-            "agent_type": agent_type,
-            "agent_name": agent_name,
+            "message": f"Agent {agent_id} created",
+            "session_id": f"wc-{agent_id}",
+            "agent_id": agent_id,
             "port": port,
             "pid": pid
         }
 
-    def suspend_agent(self, session_id: str) -> Dict[str, Any]:
-        """Suspend Agent"""
-        session = self.session_service.get_session_by_id(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
+    def suspend_agent(self, agent_id: str) -> Dict[str, Any]:
+        """Suspend/Stop Agent"""
+        state = agent_state.get_by_id(agent_id)
+        if not state:
+            raise ValueError(f"Agent {agent_id} not found")
 
-        pid = session.get("pid")
+        pid = state.get("pid")
         if pid:
             self.process_manager.stop_agent_process(pid)
 
-        port = session.get("port")
+        port = state.get("port")
         if port:
             self.process_manager.release_port(port)
 
-        self.session_service.update_session_port_pid(session_id, None, None)
-        self.session_service.update_session_status(session_id, "suspended")
+        agent_state.set_inactive(agent_id)
 
-        return {"status": "ok", "message": f"Agent {session_id} suspended"}
+        return {"status": "ok", "message": f"Agent {agent_id} suspended"}
 
-    def resume_agent(self, session_id: str) -> Dict[str, Any]:
-        """Resume Agent"""
-        session = self.session_service.get_session_by_id(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
+    def resume_agent(self, agent_id: str) -> Dict[str, Any]:
+        """Resume/Start Agent"""
+        agent_config = self._get_agent_config(agent_id)
+        if not agent_config:
+            raise ValueError(f"Unknown agent_id: {agent_id}")
 
-        pid = session.get("pid")
+        state = agent_state.get_by_id(agent_id)
+        if not state:
+            return self.create_agent(agent_id)
+
+        pid = state.get("pid")
         if pid and self.process_manager.is_process_running(pid):
-            return {"status": "ok", "message": f"Agent {session_id} is already running"}
+            return {"status": "ok", "message": f"Agent {agent_id} is already running"}
 
-        agent_type = session.get("agent_type")
-        port, new_pid = self.process_manager.start_agent_process(
-            session_id,
-            agent_type,
-            session.get("agent_name"),
-            AGENT_MAIN_FILES.get(agent_type, "")
+        port = agent_config["port"]
+        new_pid = self.process_manager.start_agent_process(
+            agent_id=agent_id,
+            agent_type=agent_config["agent_type"],
+            agent_name=agent_config["agent_name"],
+            main_file=agent_config["main_file"],
+            port=port
         )
-        self.session_service.update_session_port_pid(session_id, port, new_pid)
-        self.session_service.update_session_status(session_id, "active")
+
+        agent_state.set_active(agent_id, new_pid, port)
 
         return {
             "status": "ok",
-            "message": f"Agent {session_id} resumed",
+            "message": f"Agent {agent_id} resumed",
             "port": port,
             "pid": new_pid
         }
 
-    def update_agent_name(self, session_id: str, new_name: str) -> Dict[str, Any]:
-        """Update Agent name"""
-        self.session_service.update_session_agent_name(session_id, new_name)
-        return {"status": "ok", "message": f"Agent name updated to {new_name}"}
-
-    def delete_agent(self, session_id: str) -> Dict[str, Any]:
+    def delete_agent(self, agent_id: str) -> Dict[str, Any]:
         """Delete Agent"""
-        session = self.session_service.get_session_by_id(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
+        state = agent_state.get_by_id(agent_id)
+        if not state:
+            raise ValueError(f"Agent {agent_id} not found")
 
-        pid = session.get("pid")
+        pid = state.get("pid")
         if pid:
             self.process_manager.stop_agent_process(pid)
 
-        port = session.get("port")
+        port = state.get("port")
         if port:
             self.process_manager.release_port(port)
 
-        self.session_service.delete_session(session_id)
+        agent_state.set_inactive(agent_id)
 
-        return {"status": "ok", "message": f"Agent {session_id} deleted"}
+        return {"status": "ok", "message": f"Agent {agent_id} deleted"}
 
-    async def chat_stream(self, session_id: str, message: str):
-        """Stream chat to Agent"""
-        session = self.session_service.get_session_by_id(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
+    async def chat_stream(self, agent_id: str, message: str):
+        """Stream chat to Agent - proxies to agent's /chat/stream API
 
-        port = session.get("port")
-        if not port:
-            raise ValueError("Agent is not running, please resume it first")
+        The Agent manages its own session internally. We pass a session_id
+        that the Agent will use/create.
+        """
+        state = agent_state.get_by_id(agent_id)
+        if not state or not state.get("port"):
+            raise ValueError(f"Agent {agent_id} is not running")
 
-        self.session_service.append_message(session_id, "user", message)
-        session_messages = self.session_service.get_session_messages(session_id)
+        port = state["port"]
+
+        # Get actual session_id from agent's active session
+        sessions = await self.get_agent_sessions(agent_id)
+        agent_session_id = f"wc-{agent_id}"
+        if sessions:
+            active_sessions = [s for s in sessions if s.get("status") == "active"]
+            if active_sessions:
+                agent_session_id = active_sessions[0].get("session_id")
+            elif sessions:
+                agent_session_id = sessions[0].get("session_id")
 
         async def generate():
             try:
@@ -170,60 +376,23 @@ class AgentService:
                         f"http://localhost:{port}/chat/stream",
                         json={
                             "task": message,
-                            "context": session_messages
+                            "session_id": agent_session_id
                         },
                         timeout=aiohttp.ClientTimeout(total=120)
                     ) as response:
                         if response.status == 200:
                             async for line in response.content:
-                                line = line.decode('utf-8').strip()
-                                if not line.startswith('data:'):
-                                    continue
-                                try:
-                                    data = json.loads(line[5:].strip())
-                                    event_type = data.get('type')
-
-                                    if event_type in ('assistant', 'content'):
-                                        content = data.get('content', '')
-                                        self.session_service.append_message(session_id, "assistant", content)
-                                        yield f"data: {json.dumps({'type': 'content', 'content': content}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'tool_call':
-                                        tool_calls = data.get('tool_calls', [])
-                                        yield f"data: {json.dumps({'type': 'tool_call', 'tool_calls': tool_calls}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'reasoning':
-                                        reasoning_content = data.get('content', '')
-                                        self.session_service.append_message(session_id, "assistant", "", reasoning_content=reasoning_content)
-                                        yield f"data: {json.dumps({'type': 'reasoning', 'content': reasoning_content}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'tool_result':
-                                        tool_call_id = data.get('tool_call_id')
-                                        content = data.get('content', '')
-                                        self.session_service.append_message(session_id, "tool", content, tool_call_id=tool_call_id)
-                                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_call_id': tool_call_id, 'content': content}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'done':
-                                        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-
-                                    elif event_type == 'error':
-                                        error = data.get('error')
-                                        yield f"data: {json.dumps({'type': 'error', 'error': error}, ensure_ascii=False)}\n\n"
-
-                                except json.JSONDecodeError:
-                                    continue
+                                yield line
                         else:
-                            error_msg = f"Agent response error: {response.status}"
-                            yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
+                            error_data = {"type": "error", "error": f"Agent response error: {response.status}"}
+                            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n".encode()
 
             except aiohttp.ClientError as e:
-                error_msg = f'Connection failed: {str(e)}'
-                self.logger.error(error_msg)
-                yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
+                error_data = {"type": "error", "error": f'Connection failed: {str(e)}'}
+                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n".encode()
             except Exception as e:
-                error_msg = f'Processing failed: {str(e)}'
-                self.logger.error(error_msg)
-                yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
+                error_data = {"type": "error", "error": f'Processing failed: {str(e)}'}
+                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n".encode()
 
         from fastapi.responses import StreamingResponse
         return StreamingResponse(generate(), media_type="text/event-stream")

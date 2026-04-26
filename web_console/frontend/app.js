@@ -215,7 +215,7 @@ async function switchAgent(sessionId) {
             
             if (messages.length > 0) {
                 messages.forEach((msg, index) => {
-                    addMessage(msg.role, msg.content, msg.tool_calls, msg.tool_results, index);
+                    addMessage(msg.role, msg.content, msg.tool_calls, msg.tool_results, index, msg.reasoning_content);
                 });
             } else {
                 chatContainer.innerHTML = `
@@ -453,20 +453,20 @@ async function sendMessage() {
         
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        
+
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
+
             const chunk = decoder.decode(value);
             const lines = chunk.split('\n');
-            
+
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
                     const data = line.slice(6);
                     try {
                         const parsed = JSON.parse(data);
-                        
+
                         // 处理不同类型的 SSE 事件
                     if (parsed.type === 'content') {
                         // AI 普通回复内容
@@ -478,6 +478,15 @@ async function sendMessage() {
                         console.log('Tool call:', parsed.tool_calls);
                         currentAssistantMessage.toolCalls = parsed.tool_calls;
                         addToolCallUI(messageElement, parsed.tool_calls);
+                    }
+                    else if (parsed.type === 'reasoning') {
+                        // AI 思考内容
+                        console.log('Reasoning:', parsed.content);
+                        if (!currentAssistantMessage.reasoningContent) {
+                            currentAssistantMessage.reasoningContent = '';
+                        }
+                        currentAssistantMessage.reasoningContent += parsed.content;
+                        updateReasoningContent(messageElement, currentAssistantMessage.reasoningContent);
                     }
                     else if (parsed.type === 'tool_result') {
                         // 工具执行结果
@@ -510,6 +519,8 @@ async function sendMessage() {
                     }
                 }
             }
+            // 让浏览器有机会重绘
+            await new Promise(resolve => setTimeout(resolve, 0));
         }
         
     } catch (error) {
@@ -523,7 +534,7 @@ async function sendMessage() {
     }
 }
 
-function addMessage(role, content, toolCalls, toolResults, messageIndex) {
+function addMessage(role, content, toolCalls, toolResults, messageIndex, reasoningContent) {
     const container = document.getElementById('chatContainer');
     
     const welcomeMessage = container.querySelector('.welcome-message');
@@ -583,6 +594,11 @@ function addMessage(role, content, toolCalls, toolResults, messageIndex) {
     messageDiv.appendChild(deleteButton);
     container.appendChild(messageDiv);
     
+    // 处理思考内容
+    if (reasoningContent) {
+        addReasoningContentUI(messageDiv, reasoningContent);
+    }
+    
     // 处理工具调用
     if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
         addToolCallUI(messageDiv, toolCalls);
@@ -629,7 +645,72 @@ function updateMessageContent(messageElement, content) {
     if (bubble) {
         bubble.innerHTML = renderMarkdown(content);
     }
-    
+
+    const container = document.getElementById('chatContainer');
+    container.scrollTop = container.scrollHeight;
+}
+
+function addReasoningContentUI(messageElement, reasoningContent) {
+    const bubble = messageElement.querySelector('.bubble');
+    if (!bubble) return;
+
+    const reasoningDiv = document.createElement('div');
+    reasoningDiv.className = 'reasoning-content';
+
+    const reasoningHeader = document.createElement('div');
+    reasoningHeader.className = 'reasoning-header';
+    reasoningHeader.innerHTML = `
+        <span class="reasoning-icon">🧠</span>
+        <span class="reasoning-title">思考过程</span>
+        <span class="reasoning-toggle" onclick="toggleReasoning(this)">▼</span>
+    `;
+
+    const reasoningBody = document.createElement('div');
+    reasoningBody.className = 'reasoning-body';
+    reasoningBody.style.display = 'none';
+    reasoningBody.innerHTML = `<pre>${reasoningContent}</pre>`;
+
+    reasoningDiv.appendChild(reasoningHeader);
+    reasoningDiv.appendChild(reasoningBody);
+
+    bubble.insertBefore(reasoningDiv, bubble.firstChild);
+
+    const container = document.getElementById('chatContainer');
+    container.scrollTop = container.scrollHeight;
+}
+
+function updateReasoningContent(messageElement, reasoningContent) {
+    let reasoningDiv = messageElement.querySelector('.reasoning-content');
+    if (!reasoningDiv) {
+        const bubble = messageElement.querySelector('.bubble');
+        if (!bubble) return;
+
+        reasoningDiv = document.createElement('div');
+        reasoningDiv.className = 'reasoning-content';
+
+        const reasoningHeader = document.createElement('div');
+        reasoningHeader.className = 'reasoning-header';
+        reasoningHeader.innerHTML = `
+            <span class="reasoning-icon">🧠</span>
+            <span class="reasoning-title">思考过程</span>
+            <span class="reasoning-toggle" onclick="toggleReasoning(this)">▼</span>
+        `;
+
+        const reasoningBody = document.createElement('div');
+        reasoningBody.className = 'reasoning-body';
+        reasoningBody.style.display = 'none';
+
+        reasoningDiv.appendChild(reasoningHeader);
+        reasoningDiv.appendChild(reasoningBody);
+
+        bubble.insertBefore(reasoningDiv, bubble.firstChild);
+    }
+
+    const reasoningBody = reasoningDiv.querySelector('.reasoning-body');
+    if (reasoningBody) {
+        reasoningBody.innerHTML = `<pre>${reasoningContent}</pre>`;
+    }
+
     const container = document.getElementById('chatContainer');
     container.scrollTop = container.scrollHeight;
 }
@@ -722,6 +803,15 @@ function updateToolResultUI(messageElement, toolCallId, result) {
 // 切换工具结果的显示/隐藏
 function toggleToolResult(toggleBtn) {
     const contentDiv = toggleBtn.closest('.tool-message-header').nextElementSibling;
+    const isHidden = contentDiv.style.display === 'none';
+    contentDiv.style.display = isHidden ? 'block' : 'none';
+    toggleBtn.textContent = isHidden ? '▲' : '▼';
+}
+
+// 切换思考内容的显示/隐藏
+function toggleReasoning(toggleBtn) {
+    const reasoningDiv = toggleBtn.closest('.reasoning-content');
+    const contentDiv = reasoningDiv.querySelector('.reasoning-body');
     const isHidden = contentDiv.style.display === 'none';
     contentDiv.style.display = isHidden ? 'block' : 'none';
     toggleBtn.textContent = isHidden ? '▲' : '▼';

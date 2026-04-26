@@ -44,7 +44,7 @@ export async function streamChat(
     body: JSON.stringify({
       message,
       history: formattedHistory,
-      session_id: sessionId,
+      agent_id: sessionId,
     }),
   });
 

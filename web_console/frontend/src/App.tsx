@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
+import { SessionPanel } from '@/components/SessionPanel';
 import { ChatContainer } from '@/components/Chat';
 import { MessageInput } from '@/components/Input';
 import { Header } from '@/components/Layout';
@@ -9,15 +10,17 @@ import { useChatStore } from '@/features/chat/chatStore';
 import { useThemeStore } from '@/features/theme/themeStore';
 import { agentsApi } from '@/features/agents/agentsApi';
 import { streamChat } from '@/features/chat/chatApi';
-import { formatAgentType } from '@/utils/formatters';
 import type { Message } from '@/types';
 
 export function App() {
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
+  const [sessionPanelVisible, setSessionPanelVisible] = useState(true);
 
   const {
     agents,
+    sessions,
     currentSessionId,
+    currentAgentId,
     currentAgentType,
     selectAgent,
     fetchAgents,
@@ -51,10 +54,67 @@ export function App() {
 
   useEffect(() => {
     const firstAgent = agents[0];
-    if (firstAgent && !currentSessionId) {
-      selectAgent(firstAgent.session_id);
+    if (firstAgent?.session_id && !currentSessionId) {
+      selectAgent(firstAgent.session_id).then(() => {
+        // Selection complete
+      });
     }
   }, [agents, currentSessionId, selectAgent]);
+
+  // Transform agent session format to frontend format
+  // Agent stores: reasoning msg, tool_call msg, tool_result msg as SEPARATE messages
+  // Frontend expects: tool_call msg with tool_results attached
+  function transformSessionMessages(messages: any[]): any[] {
+    const result: any[] = [];
+    let i = 0;
+
+    while (i < messages.length) {
+      const msg = messages[i];
+
+      // Pass through A2A messages as-is
+      if (msg.type === 'agent_request' || msg.type === 'agent_response') {
+        result.push(msg);
+        i++;
+        continue;
+      }
+
+      if (msg.role === 'assistant') {
+        const hasReasoning = !!msg.reasoning_content;
+        const hasToolCalls = !!(msg.tool_calls && msg.tool_calls.length > 0);
+        const hasContent = !!(msg.content && msg.content.trim());
+
+        if (hasToolCalls) {
+          // Look ahead for tool results
+          let toolResults: any[] = [];
+          if (i + 1 < messages.length && messages[i + 1].role === 'tool') {
+            const toolMsg = messages[i + 1];
+            toolResults = [{
+              tool_call_id: toolMsg.tool_call_id,
+              content: toolMsg.content
+            }];
+            i++; // Skip tool message
+          }
+
+          result.push({
+            ...msg,
+            tool_results: toolResults,
+            // If no content but has reasoning, keep reasoning for display
+            reasoning_content: hasContent ? undefined : msg.reasoning_content
+          });
+        } else if (hasReasoning || hasContent) {
+          // Regular assistant message with reasoning or content
+          result.push(msg);
+        }
+        // Skip empty messages that aren't reasoning or tool_calls
+      } else if (msg.role === 'user' || msg.role === 'tool') {
+        result.push(msg);
+      }
+
+      i++;
+    }
+
+    return result;
+  }
 
   const handleSelectAgent = useCallback(async (sessionId: string) => {
     if (!sessionId) {
@@ -63,18 +123,26 @@ export function App() {
       return;
     }
 
+    setSessionPanelVisible(true);
     await selectAgent(sessionId);
     resetMessages();
 
     try {
       const sessionData = await agentsApi.getSession(sessionId);
-      const loadedMessages: Message[] = sessionData.messages.map((msg, index) => ({
+      const transformed = transformSessionMessages(sessionData.messages);
+      const loadedMessages: Message[] = transformed.map((msg, index) => ({
+        type: msg.type as 'message' | 'agent_request' | 'agent_response' | undefined,
         role: msg.role as 'user' | 'assistant' | 'tool' | 'system',
-        content: msg.content,
+        content: msg.content || '',
         index,
         tool_calls: msg.tool_calls as Array<{ id?: string; name: string; arguments: Record<string, unknown> }>,
         tool_results: msg.tool_results as Array<{ tool_call_id: string; content: string }>,
         reasoning_content: msg.reasoning_content,
+        tool_call_id: msg.tool_call_id,
+        source_agent_id: msg.source_agent_id,
+        target_agent_id: msg.target_agent_id,
+        task: msg.task,
+        event_id: msg.event_id,
       }));
       useChatStore.getState().setMessages(loadedMessages);
     } catch (error) {
@@ -99,7 +167,7 @@ export function App() {
       await streamChat(
         message,
         messages,
-        currentSessionId,
+        currentAgentId,
         {
           onContent: (content) => {
             streamingContent += content;
@@ -139,7 +207,7 @@ export function App() {
       updateStreamingContent(`请求失败: ${(error as Error).message}`);
       clearStreamingState();
     }
-  }, [messages, currentSessionId, isStreaming, addMessage, updateStreamingContent, setToolCalls, addToolResult, appendReasoning, clearStreamingState]);
+  }, [messages, currentAgentId, isStreaming, addMessage, updateStreamingContent, setToolCalls, addToolResult, appendReasoning, clearStreamingState]);
 
   const handleDeleteMessage = useCallback(async (index: number) => {
     if (!currentSessionId) return;
@@ -155,7 +223,7 @@ export function App() {
   }, [currentSessionId, handleSelectAgent]);
 
   const title = currentSessionId
-    ? `${formatAgentType(currentAgentType)} Agent`
+    ? (sessions.find(s => s.session_id === currentSessionId)?.session_name || currentAgentType)
     : 'Select an Agent';
 
   return (
@@ -163,6 +231,14 @@ export function App() {
       <Sidebar
         currentSessionId={currentSessionId}
         onSelectAgent={handleSelectAgent}
+        onShowNotification={(message, type) => setNotification({ message, type })}
+      />
+
+      <SessionPanel
+        currentSessionId={currentSessionId}
+        visible={sessionPanelVisible}
+        onHide={() => setSessionPanelVisible(false)}
+        onSelectSession={handleSelectAgent}
         onShowNotification={(message, type) => setNotification({ message, type })}
       />
 

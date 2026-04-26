@@ -9,7 +9,6 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / 'agent'))
 
 
 def assert_equal(actual, expected, context=""):
@@ -34,7 +33,7 @@ def isolated_env(monkeypatch):
     monkeypatch.setenv("AGENT_SESSION_ID", "test-session-001")
     monkeypatch.setenv("AGENT_NAME", "TestAgent")
     monkeypatch.setenv("AGENT_ID", "test-agent-001")
-    monkeypatch.setenv("AGENT_DIR", str(PROJECT_ROOT / "agent" / "agent_instances" / "supervisor_agent"))
+    monkeypatch.setenv("AGENT_DIR", str(PROJECT_ROOT / "agents" / "supervisor_agent"))
     monkeypatch.setenv("PROJECT_ROOT", str(PROJECT_ROOT))
     yield
 

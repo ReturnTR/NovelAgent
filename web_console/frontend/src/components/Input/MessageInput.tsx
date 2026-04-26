@@ -10,33 +10,66 @@ export function MessageInput({ onSend, disabled = false, placeholder = '输入�
   const [message, setMessage] = useState('');
   const [isComposing, setIsComposing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const resizeRef = useRef<HTMLDivElement>(null);
+  const isResizingRef = useRef(false);
+  const startYRef = useRef(0);
+  const startHeightRef = useRef(0);
 
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`;
-    }
-  }, [message]);
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizingRef.current || !containerRef.current) return;
+
+      const delta = startYRef.current - e.clientY;
+      const newHeight = Math.min(Math.max(startHeightRef.current + delta, 60), 500);
+      containerRef.current.style.height = `${newHeight}px`;
+    };
+
+    const handleMouseUp = () => {
+      if (isResizingRef.current) {
+        isResizingRef.current = false;
+        resizeRef.current?.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  const handleResizeDown = (e: React.MouseEvent) => {
+    isResizingRef.current = true;
+    startYRef.current = e.clientY;
+    startHeightRef.current = containerRef.current?.offsetHeight || 60;
+    resizeRef.current?.classList.add('dragging');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  };
 
   const handleSend = () => {
     if (message.trim() && !isComposing) {
       onSend(message.trim());
       setMessage('');
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-      }
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+    // Enter alone sends; Cmd+Enter or Shift+Enter inserts newline
+    if (e.key === 'Enter' && !e.shiftKey && !(e.metaKey || e.ctrlKey) && !isComposing) {
       e.preventDefault();
       handleSend();
     }
   };
 
   return (
-    <div className="input-container">
+    <div className="input-container" ref={containerRef}>
+      <div className="input-resize-handle" ref={resizeRef} onMouseDown={handleResizeDown} />
       <textarea
         ref={textareaRef}
         value={message}
@@ -45,19 +78,9 @@ export function MessageInput({ onSend, disabled = false, placeholder = '输入�
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={() => setIsComposing(false)}
         placeholder={placeholder}
-        rows={1}
+        rows={2}
         disabled={disabled}
       />
-      <button
-        onClick={handleSend}
-        disabled={disabled || !message.trim()}
-        className="send-button"
-      >
-        <span>发送</span>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-        </svg>
-      </button>
     </div>
   );
 }

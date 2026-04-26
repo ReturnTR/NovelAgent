@@ -1,0 +1,20 @@
+[
+  {
+    "agent_id": "supervisor-001",
+    "agent_type": "supervisor",
+    "agent_name": "主控 Agent",
+    "port": 8001,
+    "main_file": "agents/supervisor_agent/main.py",
+    "pid": 41440,
+    "status": "active"
+  },
+  {
+    "agent_id": "character-001",
+    "agent_type": "character",
+    "agent_name": "角色 Agent",
+    "port": 8002,
+    "main_file": "agents/character_agent/main.py",
+    "pid": 40489,
+    "status": "active"
+  }
+]

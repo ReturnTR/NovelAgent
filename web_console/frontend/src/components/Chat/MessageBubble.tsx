@@ -3,9 +3,10 @@ import { renderMarkdown } from '@/utils/markdown';
 interface MessageBubbleProps {
   role: 'user' | 'assistant' | 'tool';
   content: string;
+  reasoning_content?: string;
 }
 
-export function MessageBubble({ role, content }: MessageBubbleProps) {
+export function MessageBubble({ role, content, reasoning_content }: MessageBubbleProps) {
   return (
     <div className="bubble">
       {role === 'tool' ? (
@@ -15,7 +16,7 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
           <span className="tool-toggle">▼</span>
         </div>
       ) : (
-        <div dangerouslySetInnerHTML={{ __html: renderMarkdown(content || '思考中...') }} />
+        <div dangerouslySetInnerHTML={{ __html: renderMarkdown(content || reasoning_content || '') }} />
       )}
     </div>
   );

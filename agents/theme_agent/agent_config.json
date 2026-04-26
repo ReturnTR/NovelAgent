@@ -1,0 +1,54 @@
+{
+  "agent_type": "theme",
+  "agent_name": "主题Agent",
+  "version": "1.0.0",
+  "description": "负责创建和管理小说主题",
+  "capabilities": [
+    {
+      "name": "create_theme",
+      "description": "创建新主题",
+      "parameters": {
+        "novel_id": "小说ID",
+        "theme_data": "主题数据JSON"
+      }
+    },
+    {
+      "name": "update_theme",
+      "description": "更新主题信息",
+      "parameters": {
+        "theme_id": "主题ID",
+        "update_data": "更新数据JSON"
+      }
+    }
+  ],
+  "model": {
+    "provider": "moonshot",
+    "model_id": "kimi-k2.5",
+    "temperature": 1,
+    "max_tokens": 88192
+  },
+  "skills": [
+    {
+      "name": "create_theme",
+      "description": "创建主题的技能指导",
+      "trigger_keywords": ["主题", "世界观", "设定"]
+    }
+  ],
+  "prompts": {
+    "system_prompt": "prompts/system_prompt.md",
+    "task_prompt": "prompts/task_prompt.md"
+  },
+  "registry": {
+    "endpoint": "http://localhost:8000"
+  },
+  "tools": [
+    {
+      "name": "execute_bash",
+      "module": "core.base.tools.bash_executor"
+    },
+    {
+      "name": "read_skill_content",
+      "module": "core.base.tools.skill_content_reader"
+    }
+  ]
+}
