@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.a2a.types import A2AEvent, EventType
 from core.a2a.event_server import A2AEventServer
-from core.a2a.session import SessionManager
 
 
 class MockAgent:
