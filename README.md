@@ -20,26 +20,16 @@ graph TB
         RS[RegistryServer]
     end
 
-    subgraph Agents[Agent 节点 独立进程各自端口]
-        SA[SupervisorAgent<br/>port 8001]
-        CA[CharacterAgent<br/>port 8002]
-        TA[TestAgent]
-        TMA[ThemeAgent]
-    end
-
-    subgraph Core[core/a2a 共享协议]
-        ES[A2AEventServer<br/>SSE + Session]
-        SM[SessionManager<br/>JSONL 存储]
-        TT[A2ATypes<br/>EventType]
+    subgraph Agents[Agent 节点 - 每个是独立进程]
+        SA1[SupervisorAgent<br/>port 8001<br/><br/>A2AEventServer<br/>SessionManager<br/>BaseAgent]
+        SA2[CharacterAgent<br/>port 8002<br/><br/>A2AEventServer<br/>SessionManager<br/>BaseAgent]
+        SA3[TestAgent<br/>...<br/><br/>A2AEventServer<br/>SessionManager<br/>BaseAgent]
     end
 
     FE --> WC
-    WC --> SA
-    WC --> CA
-    SA --> ES
-    CA --> ES
-    ES --> SM
-    ES --> TT
+    WC <--> SA1
+    WC <--> SA2
+    WC <--> SA3
     WC --- PM
     WC --- RS
 ```
