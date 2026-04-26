@@ -32,6 +32,10 @@ graph TB
     WC <--> SA3
     WC --- PM
     WC --- RS
+
+    SA1 <--> SA2
+    SA2 <--> SA3
+    SA1 -.-> SA3
 ```
 
 ---
