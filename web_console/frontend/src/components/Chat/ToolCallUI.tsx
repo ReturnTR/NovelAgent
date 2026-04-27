@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { syntaxHighlightJson } from '@/utils/markdown';
 
 interface ToolCallUIProps {
   toolCalls: Array<{
@@ -58,7 +57,7 @@ export function ToolCallUI({ toolCalls, toolResults }: ToolCallUIProps) {
                     <pre>{(() => {
                       try {
                         const parsed = JSON.parse(result.content);
-                        return syntaxHighlightJson(parsed);
+                        return JSON.stringify(parsed, null, 2);
                       } catch {
                         return result.content;
                       }

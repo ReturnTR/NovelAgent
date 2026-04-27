@@ -1,6 +1,6 @@
 from core.base.agent_base import BaseAgent
 
 
-class SupervisorAgent(BaseAgent):
+class ThemeAgent(BaseAgent):
     """主控Agent"""
     pass

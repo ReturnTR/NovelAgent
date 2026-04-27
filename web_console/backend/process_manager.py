@@ -5,7 +5,8 @@ import subprocess
 import signal
 import logging
 import socket
-from typing import Set, Optional, List
+from pathlib import Path
+from datetime import datetime
 
 import psutil
 from web_console.backend.config import PROJECT_ROOT, PORT_BASE, MAX_PORT
@@ -71,13 +72,18 @@ class AgentProcessManager:
             raise FileNotFoundError(f"Agent main file not found: {main_path}")
 
         try:
-            agent_dir = str(main_path.parent)
+            agent_dir = Path(main_path).parent
+            log_dir = agent_dir / "logs"
+            log_dir.mkdir(exist_ok=True)
+            log_file = log_dir / f"{datetime.now().strftime('%Y%m%d')}.log"
+            log_fd = open(log_file, "a", encoding="utf-8")
+
             env = os.environ.copy()
             env["AGENT_ID"] = agent_id
             env["AGENT_TYPE"] = agent_type
             env["AGENT_NAME"] = agent_name
             env["AGENT_PORT"] = str(port)
-            env["AGENT_DIR"] = agent_dir
+            env["AGENT_DIR"] = str(agent_dir)
             env["PROJECT_ROOT"] = str(PROJECT_ROOT)
 
             # Use conda agent environment
@@ -86,10 +92,10 @@ class AgentProcessManager:
                 ["bash", "-c", conda_activate + f"cd {str(PROJECT_ROOT)} && python {str(main_path)}"],
                 env=env,
                 cwd=str(PROJECT_ROOT),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stdout=log_fd,
+                stderr=subprocess.STDOUT
             )
-            self.logger.info(f"Agent started: pid={proc.pid}, port={port}")
+            self.logger.info(f"Agent started: pid={proc.pid}, port={port}, log={log_file}")
             return proc.pid
         except Exception as e:
             self.release_port(port)

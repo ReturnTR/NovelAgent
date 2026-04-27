@@ -123,15 +123,22 @@ AGENT_DEBUG=true
 
 ### 启动
 
-**1. 启动 Web Console（统一网关 + 前端）**
+**1. 启动 Web Console**
 
+后端
 ```bash
-cd web_console/backend
-python -m web_console.backend.main --debug
+nohup python -m web_console.backend.main --debug > web_console/logs/$(date +%Y%m%d).log &
 # 访问 http://localhost:8000
 ```
 
-**2. 启动 Agent 节点（独立进程）**
+前端
+```bash
+cd web_console/frontend
+nohup npm run dev > ../logs/$(date +%Y%m%d).frontend.log &
+# 访问 http://localhost:9001
+```
+
+**2. 启动 Agent 节点（独立进程，测试时候，实际在前端即可启动）**
 
 ```bash
 cd agents/supervisor_agent

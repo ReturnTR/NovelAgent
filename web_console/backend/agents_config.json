@@ -5,7 +5,7 @@
     "agent_name": "主控 Agent",
     "port": 8001,
     "main_file": "agents/supervisor_agent/main.py",
-    "pid": 41440,
+    "pid": 68854,
     "status": "active"
   },
   {
@@ -14,7 +14,16 @@
     "agent_name": "角色 Agent",
     "port": 8002,
     "main_file": "agents/character_agent/main.py",
-    "pid": 40489,
+    "pid": 67345,
+    "status": "active"
+  },
+  {
+    "agent_id": "theme-001",
+    "agent_type": "theme",
+    "agent_name": "主题 Agent",
+    "port": 8003,
+    "main_file": "agents/theme_agent/main.py",
+    "pid": 69014,
     "status": "active"
   }
 ]
