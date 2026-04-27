@@ -3,7 +3,7 @@
 ## 项目简介
 
 NovelAgent 是一个基于 A2A（Agent-to-Agent）协议的多 Agent 协作系统，支持 Agent 生命周期管理、会话管理和流式对话交互。
-
+![alt text](image.png)
 ---
 
 ## 项目架构
