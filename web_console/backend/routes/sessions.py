@@ -17,18 +17,23 @@ async def _find_agent_by_session(agent_service, session_id: str):
 
 
 @router.get("")
-async def list_sessions(request: Request):
-    """List sessions from all configured agents"""
+async def list_sessions(request: Request, agent_id: str = None):
+    """List sessions from all configured agents, optionally filtered by agent_id"""
     agent_service = request.app.state.agent_service
     all_sessions = []
     agents = await agent_service.list_agents()
     for agent in agents:
+        # Skip if filtering by agent_id and this isn't the target
+        if agent_id and agent["agent_id"] != agent_id:
+            continue
         if agent["status"] == "active":
             sessions = await agent_service.get_agent_sessions(agent["agent_id"])
             for session in sessions:
-                session["agent_id"] = agent["agent_id"]
-                session["agent_name"] = agent["agent_name"]
-                session["agent_type"] = agent["agent_type"]
+                # Don't overwrite session's native agent_id - only add metadata if not present
+                if "agent_name" not in session:
+                    session["agent_name"] = agent["agent_name"]
+                if "agent_type" not in session:
+                    session["agent_type"] = agent["agent_type"]
                 all_sessions.append(session)
     return {"sessions": all_sessions}
 

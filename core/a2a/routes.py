@@ -37,6 +37,7 @@ def setup_routes(
     registry_endpoint: str,
     handle_user_message,
     handle_event,
+    handle_async_event,
 ) -> None:
     """
     设置 FastAPI 路由
@@ -171,9 +172,7 @@ def setup_routes(
     @app.post("/a2a/event")
     async def handle_a2a_event(request: Request):
         """
-        核心端点：处理收到的 A2A 事件
-
-        处理 USER_MESSAGE 和其他 A2A 事件
+        核心端点：处理收到的 A2A 事件（同步模式，等待响应）
         """
         from .types import A2AEvent, EventType
 
@@ -198,6 +197,26 @@ def setup_routes(
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/a2a/async_event")
+    async def handle_a2a_async_event(request: Request):
+        """
+        异步 A2A 事件端点（不等待响应，立即返回）
+
+        接收异步消息，记录到 session，然后触发后台处理
+        """
+        from .types import A2AEvent
+
+        try:
+            data = await request.json()
+            event = A2AEvent(**data)
+            print(f"[A2A Server] Received async event: {event.event_id} from={event.source}")
+
+            result = await handle_async_event(event)
+            return JSONResponse(content=result)
+
+        except Exception as e:
+            return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
 
     @app.get("/health")
     async def health_check():

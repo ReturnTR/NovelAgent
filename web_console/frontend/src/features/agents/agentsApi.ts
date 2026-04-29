@@ -57,9 +57,13 @@ export const agentsApi = {
     if (!response.ok) throw new Error('Failed to delete agent');
   },
 
-  async fetchSessions(): Promise<{ sessions: Session[] }> {
+  async fetchSessions(agentId?: string): Promise<{ sessions: Session[] }> {
     const base = getBaseUrl();
-    const response = await fetch(`${base}/api/sessions`);
+    let url = `${base}/api/sessions`;
+    if (agentId) {
+      url += `?agent_id=${encodeURIComponent(agentId)}`;
+    }
+    const response = await fetch(url);
     if (!response.ok) throw new Error('Failed to fetch sessions');
     return response.json();
   },

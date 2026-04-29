@@ -1,0 +1,42 @@
+{
+  "agent_type": "check",
+  "agent_name": "校验Agent",
+  "version": "1.0.0",
+  "description": "负责校验内容的逻辑一致性、事实准确性、风格统一性",
+  "capabilities": [
+    {
+      "name": "check_consistency",
+      "description": "校验内容一致性",
+      "parameters": {
+        "content": "待校验的内容"
+      }
+    }
+  ],
+  "model": {
+    "provider": "moonshot",
+    "model_id": "kimi-k2.5",
+    "temperature": 1.0,
+    "max_tokens": 88192
+  },
+  "prompts": {
+    "system_prompt": "prompts/system_prompt.md",
+    "task_prompt": "prompts/task_prompt.md"
+  },
+  "registry": {
+    "endpoint": "http://localhost:8000"
+  },
+  "tools": [
+    {
+      "name": "execute_bash",
+      "module": "core.base.tools.bash_executor"
+    },
+    {
+      "name": "read_skill_content",
+      "module": "core.base.tools.skill_content_reader"
+    },
+    {
+      "name": "execute_remote_mysql_command",
+      "module": "core.base.tools.mysql_executor"
+    }
+  ]
+}

@@ -240,35 +240,78 @@ class A2AClient:
 
         @tool("send_agent_message_async")
         def send_agent_message_async(
+            content: str,
             target_agent_id: str,
-            task: str,
-            context: Optional[Dict[str, Any]] = None
+            event_id: Optional[str] = None
         ) -> Dict[str, Any]:
             """
-            向指定的 Agent 发送消息（异步模式，发送后立即返回）
+            异步发送消息给指定 Agent（发送后立即返回，不等待结果）
 
             使用场景：
             - 不需要立即获取结果
             - 目标 Agent 可以慢慢处理
+            - 目标 Agent 会自主判断是否回复
+
+            消息格式：
+            "这是一条来自\"{source_agent_id}\"的消息，消息id为{event_id}，消息内容如下：\n{content}"
 
             Args:
+                content: 消息内容
                 target_agent_id: 目标 Agent 的 ID
-                task: 任务描述
-                context: 任务上下文数据
+                event_id: 消息ID（可选，不填则自动生成）
 
             Returns:
-                异步发送确认
+                发送成功或失败信息
             """
             try:
-                result = client.send_agent_message(
-                    target_agent_id=target_agent_id,
-                    task=task,
-                    context=context,
-                    mode=SendMessageMode.ASYNC,
-                    timeout=0
-                )
-                return result
-            except Exception as e:
-                return {"success": False, "error": str(e)}
+                # 自动生成 event_id
+                if not event_id:
+                    event_id = f"evt-{str(uuid.uuid4())[:8]}"
 
-        return [discover_agents, send_agent_message, send_agent_message_async]
+                # 格式化内容
+                formatted_content = f"这是一条来自\"{client.agent_id}\"的消息，消息id为{event_id}，消息内容如下：\n{content}"
+
+                # 查找目标 Agent
+                target_agents = client.discover_agents()
+                target_agent = next(
+                    (a for a in target_agents if a.get("agent_id") == target_agent_id),
+                    None
+                )
+
+                if not target_agent:
+                    return {"success": False, "message": f"发送失败: 未找到 Agent {target_agent_id}"}
+
+                target_endpoint = target_agent.get("endpoint")
+
+                # 构造事件
+                from .types import A2AEvent, EventType
+                event = A2AEvent(
+                    event_id=event_id,
+                    event_type=EventType.TASK_REQUEST,
+                    source=client.agent_id,
+                    target=target_agent_id,
+                    task_id=f"task-{str(uuid.uuid4())[:8]}",
+                    content={
+                        "task": formatted_content,
+                        "context": {},
+                        "mode": "async"
+                    }
+                )
+
+                # 发送（不等待响应）
+                import requests
+                response = requests.post(
+                    f"{target_endpoint}/a2a/async_event",
+                    json=event.model_dump(),
+                    timeout=10
+                )
+
+                if response.status_code == 200:
+                    return {"success": True, "message": "发送成功", "event_id": event_id}
+                else:
+                    return {"success": False, "message": f"发送失败: {response.text}"}
+
+            except Exception as e:
+                return {"success": False, "message": f"发送失败: {str(e)}"}
+
+        return [discover_agents, send_agent_message_async]

@@ -15,6 +15,7 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 import json
 import os
+import re
 import logging
 from dotenv import load_dotenv
 
@@ -153,18 +154,51 @@ class BaseAgent(ABC):
 
     def load_prompt(self) -> str:
         """
-        加载 prompt 文件
-        该方法可以重写
+        加载 prompt 文件，支持 {{filename.md}} 格式的 include 指令
+        递归解析所有引用的 md 文件（最多5层深度）
         Returns:
             prompt 内容
         """
         prompt_file = self.agent_dir / "prompts" / "system_prompt.md"
-        if prompt_file.exists():
-            with open(prompt_file, 'r', encoding='utf-8') as f:
-                return f.read()
-        else:
+        if not prompt_file.exists():
             raise FileNotFoundError(f"Prompt file not found: {prompt_file}")
-        return ""
+
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        return self._resolve_includes(content, prompt_file.parent)
+
+    def _resolve_includes(self, content: str, prompts_dir: Path, depth: int = 0) -> str:
+        """
+        递归解析 include 指令
+        格式：{{filename.md}} -> 替换为对应文件内容
+        """
+        if depth > 5:
+            raise ValueError("Include directive nesting too deep (>5)")
+
+        include_pattern = re.compile(r'\{\{([^}]+\.md)\}\}')
+
+        while True:
+            match = include_pattern.search(content)
+            if not match:
+                break
+
+            include_file = match.group(1)
+            included_path = prompts_dir / include_file
+
+            if not included_path.exists():
+                raise FileNotFoundError(f"Include file not found: {included_path}")
+
+            with open(included_path, 'r', encoding='utf-8') as f:
+                included_content = f.read()
+
+            # 递归解析被包含的文件
+            included_content = self._resolve_includes(included_content, prompts_dir, depth + 1)
+
+            # 替换 include 指令
+            content = content.replace(match.group(0), included_content)
+
+        return content
 
     async def process_task_stream(self, task: str, context: Optional[Dict] = None):
         """

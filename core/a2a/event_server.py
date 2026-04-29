@@ -129,6 +129,7 @@ class A2AEventServer:
             registry_endpoint=self.registry_endpoint,
             handle_user_message=self.handle_user_message,
             handle_event=self.handle_event,
+            handle_async_event=self.handle_async_event,
         )
 
         # 让 Agent 注入 A2A Tools
@@ -147,6 +148,106 @@ class A2AEventServer:
     # =========================================================================
     # 事件处理
     # =========================================================================
+
+    async def handle_async_event(self, event: A2AEvent) -> Dict[str, Any]:
+        """
+        处理异步 A2A 事件（不等待响应，立即返回）
+
+        流程：
+        1. 记录 agent_request 到 session
+        2. 触发 Agent 处理（后台运行）
+        3. 立即返回成功/失败
+
+        Returns:
+            {"success": true/false, "message": "..."}
+        """
+        source = event.source
+        # 优先复用当前 active session，没有则创建 a2a_{source} session
+        active_id = self.session_manager.get_active_session_id()
+        session_id = active_id if active_id else f"a2a_{source}"
+        self.session_manager.ensure_active_session(session_id)
+        self.session_manager._get_or_create_session(session_id)
+
+        try:
+
+            request_msg = {
+                "type": "agent_request",
+                "role": "user",
+                "source_agent_id": source,
+                "target_agent_id": event.target,
+                "content": event.content.get("task", ""),
+                "event_id": event.event_id,
+                "timestamp": _now_iso()
+            }
+            self.session_manager._append_message_to_session_file(session_id, request_msg)
+
+            # 触发 Agent 处理（后台，不等待）
+            task = event.content.get("task", "")
+            context = event.content.get("context")
+
+            # 在后台运行处理（不 yield 到客户端）
+            import asyncio
+            asyncio.create_task(self._process_async_task(session_id, task, context, event.event_id))
+
+            return {"success": True, "message": "消息已接收"}
+
+        except Exception as e:
+            return {"success": False, "message": f"处理失败: {str(e)}"}
+
+    async def _process_async_task(self, session_id: str, task: str, context, event_id: str):
+        """
+        后台处理异步任务
+        Agent 自主判断是否调用 a2a_send_async 回复
+        """
+        try:
+            session_history = self.session_manager.get_session_history(session_id)
+            if isinstance(context, list) and context:
+                context = session_history + context
+            else:
+                context = session_history
+
+            response_content = ""
+            async for evt in self.agent.process_task_stream(task, context):
+                evt_type = evt.get("type")
+
+                if evt_type == "tool_call":
+                    tool_call_msg = {
+                        "type": "message",
+                        "role": "assistant",
+                        "tool_calls": evt.get("tool_calls", []),
+                        "timestamp": _now_iso()
+                    }
+                    self.session_manager._append_message_to_session_file(session_id, tool_call_msg)
+                elif evt_type == "tool_result":
+                    tool_result_msg = {
+                        "type": "message",
+                        "role": "tool",
+                        "tool_call_id": evt.get("tool_call_id", ""),
+                        "content": evt.get("content", ""),
+                        "timestamp": _now_iso()
+                    }
+                    self.session_manager._append_message_to_session_file(session_id, tool_result_msg)
+                elif evt_type == "assistant":
+                    response_content = evt.get("content", "")
+                    assistant_msg = {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": response_content,
+                        "timestamp": _now_iso()
+                    }
+                    self.session_manager._append_message_to_session_file(session_id, assistant_msg)
+
+            # 注意：异步模式下不自动发送 agent_response
+            # 由 Agent 自行判断是否调用 a2a_send_async 回复
+
+        except Exception as e:
+            error_msg = {
+                "type": "message",
+                "role": "assistant",
+                "content": f"处理异常: {str(e)}",
+                "timestamp": _now_iso()
+            }
+            self.session_manager._append_message_to_session_file(session_id, error_msg)
 
     async def handle_user_message(self, task: str, session_id: str) -> AsyncIterator[Dict]:
         """处理用户消息（来自 Web Console）"""
@@ -240,7 +341,10 @@ class A2AEventServer:
     async def handle_event(self, event: A2AEvent) -> AsyncIterator[Dict]:
         """处理 A2A 事件（Agent 间通信）"""
         source = event.source
-        session_id = f"a2a_{source}"
+        # 优先复用当前 active session，没有则创建 a2a_{source} session
+        active_id = self.session_manager.get_active_session_id()
+        session_id = active_id if active_id else f"a2a_{source}"
+        self.session_manager.ensure_active_session(session_id)
         self.session_manager._get_or_create_session(session_id)
 
         request_msg = {

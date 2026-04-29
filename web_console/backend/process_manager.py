@@ -7,6 +7,7 @@ import logging
 import socket
 from pathlib import Path
 from datetime import datetime
+from typing import Set
 
 import psutil
 from web_console.backend.config import PROJECT_ROOT, PORT_BASE, MAX_PORT
@@ -93,28 +94,66 @@ class AgentProcessManager:
                 env=env,
                 cwd=str(PROJECT_ROOT),
                 stdout=log_fd,
-                stderr=subprocess.STDOUT
+                stderr=subprocess.STDOUT,
+                start_new_session=True
             )
-            self.logger.info(f"Agent started: pid={proc.pid}, port={port}, log={log_file}")
-            return proc.pid
+
+            # Get actual python process PID reliably using pgrep
+            import time
+            import subprocess as subproc
+            actual_pid = None
+            for _ in range(10):  # Retry 10 times within 1 second
+                try:
+                    result = subproc.run(
+                        ["pgrep", "-P", str(proc.pid)],
+                        capture_output=True, text=True, timeout=1
+                    )
+                    if result.stdout.strip():
+                        actual_pid = int(result.stdout.strip().split()[0])
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.1)
+
+            if not actual_pid:
+                # Fallback: find python process by command line
+                try:
+                    result = subproc.run(
+                        ["pgrep", "-f", f"python.*{main_path.name}"],
+                        capture_output=True, text=True, timeout=1
+                    )
+                    if result.stdout.strip():
+                        actual_pid = int(result.stdout.strip().split()[0])
+                except Exception:
+                    pass
+
+            if not actual_pid:
+                actual_pid = proc.pid  # Last resort fallback
+
+            self.logger.info(f"Agent started: python_pid={actual_pid}, port={port}, log={log_file}")
+            return actual_pid
         except Exception as e:
             self.release_port(port)
             self.logger.error(f"Failed to start agent: {e}")
             raise e
 
     def stop_agent_process(self, pid: int):
-        """Stop Agent process gracefully"""
-        self.logger.info(f"Stopping agent process: pid={pid}")
+        """Stop Agent process - kill the entire process group"""
+        self.logger.info(f"Stopping agent process group: pid={pid}")
         try:
-            proc = psutil.Process(pid)
-            proc.terminate()
-            proc.wait(timeout=5)
-            self.logger.info(f"Agent process {pid} terminated gracefully")
-        except psutil.NoSuchProcess:
-            self.logger.warning(f"Process {pid} not found")
-        except Exception:
+            import signal
+            # Kill entire process group (since we use start_new_session=True)
+            os.killpg(pid, signal.SIGTERM)
+            self.logger.info(f"Agent process group {pid} terminated")
+        except ProcessLookupError:
+            self.logger.warning(f"Process group {pid} not found - may have already exited")
+        except PermissionError:
+            # Fallback to psutil kill
             try:
+                proc = psutil.Process(pid)
                 proc.kill()
-                self.logger.warning(f"Agent process {pid} killed forcefully")
-            except:
-                pass
+                self.logger.info(f"Agent process {pid} killed via psutil")
+            except psutil.NoSuchProcess:
+                self.logger.warning(f"Process {pid} not found")
+        except Exception as e:
+            self.logger.error(f"Error stopping process {pid}: {e}")

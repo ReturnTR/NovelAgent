@@ -11,7 +11,7 @@ interface AgentsState {
   loading: boolean;
   error: string | null;
   fetchAgents: () => Promise<void>;
-  fetchSessions: () => Promise<void>;
+  fetchSessions: (agentId?: string) => Promise<void>;
   selectAgent: (sessionId: string) => Promise<void>;
   createAgent: (name: string, type: string) => Promise<boolean>;
   updateAgentName: (sessionId: string, name: string) => Promise<boolean>;
@@ -43,9 +43,9 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     }
   },
 
-  fetchSessions: async () => {
+  fetchSessions: async (agentId?: string) => {
     try {
-      const data = await agentsApi.fetchSessions();
+      const data = await agentsApi.fetchSessions(agentId);
       const { currentSessionId, currentAgentId } = get();
       const updates: Partial<AgentsState> = { sessions: data.sessions };
       // Resolve currentAgentId if it's still null after sessions loaded

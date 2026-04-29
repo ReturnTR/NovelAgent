@@ -1,0 +1,43 @@
+{
+  "agent_type": "outline",
+  "agent_name": "大纲Agent",
+  "version": "1.0.0",
+  "description": "负责构建故事大纲、章节规划、情节点梳理",
+  "capabilities": [
+    {
+      "name": "create_outline",
+      "description": "创建故事大纲",
+      "parameters": {
+        "theme": "主题信息",
+        "characters": "人物设定"
+      }
+    }
+  ],
+  "model": {
+    "provider": "moonshot",
+    "model_id": "kimi-k2.5",
+    "temperature": 1.0,
+    "max_tokens": 88192
+  },
+  "prompts": {
+    "system_prompt": "prompts/system_prompt.md",
+    "task_prompt": "prompts/task_prompt.md"
+  },
+  "registry": {
+    "endpoint": "http://localhost:8000"
+  },
+  "tools": [
+    {
+      "name": "execute_bash",
+      "module": "core.base.tools.bash_executor"
+    },
+    {
+      "name": "read_skill_content",
+      "module": "core.base.tools.skill_content_reader"
+    },
+    {
+      "name": "execute_remote_mysql_command",
+      "module": "core.base.tools.mysql_executor"
+    }
+  ]
+}

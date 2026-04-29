@@ -114,6 +114,14 @@ class SessionManager:
                         continue
         return messages
 
+    def get_active_session_id(self) -> Optional[str]:
+        """获取当前 active 状态的 session ID，没有则返回 None"""
+        index_data = self._load_index()
+        for session in index_data.get("sessions", []):
+            if session.get("status") == "active":
+                return session.get("session_id")
+        return None
+
     def list_sessions(self) -> List[Dict]:
         """列出所有 session"""
         index_data = self._load_index()
